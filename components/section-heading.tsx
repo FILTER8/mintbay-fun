@@ -1,0 +1,1 @@
+export function SectionHeading({index,title,description}:{index:string,title:string,description:string}){return <div className="inner-title"><div className="section-index">[{index}]</div><h1>{title}</h1><p>{description}</p></div>}
