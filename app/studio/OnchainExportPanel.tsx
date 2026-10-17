@@ -35,6 +35,7 @@ type RoyaltyMode = "none" | "erc2981" | "enforced";
 
 type OnchainSettings = {
   symbol: string;
+  sourceHeaderArt: string;
   chainId: number;
   mintPriceEth: string;
   maxMintsPerWallet: number;
@@ -67,6 +68,7 @@ type OnchainSettings = {
 
 const defaultSettings: OnchainSettings = {
   symbol: "",
+  sourceHeaderArt: "",
   chainId: 4663,
   mintPriceEth: "0.001",
   maxMintsPerWallet: 20,
@@ -119,6 +121,21 @@ function getSymbol(name: string, customSymbol: string) {
   return (customSymbol.trim() || name.replace(/[^a-z0-9]/gi, "").slice(0, 10)).toUpperCase();
 }
 
+function normalizeSourceHeaderArt(value: string): string {
+  return value.replace(/\r\n?/g, "\n");
+}
+
+function sourceHeaderIssues(value: string): string[] {
+  if (!value) return [];
+  const issues: string[] = [];
+  if (new TextEncoder().encode(value).length > 4096) issues.push("Creator message must be 4,096 bytes or fewer.");
+  const lines = value.split("\n");
+  if (lines.length > 64) issues.push("Creator message must be 64 lines or fewer.");
+  if (lines.some(line => line.length > 160)) issues.push("Creator message lines must be 160 characters or fewer.");
+  if (!/^[\x09\x0A\x20-\x7E]*$/.test(value)) issues.push("Creator message accepts printable ASCII, tabs and newlines only.");
+  return issues;
+}
+
 function buildConfig(project: ArtProject, settings: OnchainSettings) {
   const isHoodWallet = settings.adminMode === "hoodwallet";
   const hasRoyalties = settings.royaltyMode !== "none";
@@ -132,6 +149,7 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
   return {
     collection: {
       name: project.name,
+      ...(settings.sourceHeaderArt ? { sourceHeaderArt: normalizeSourceHeaderArt(settings.sourceHeaderArt) } : {}),
       symbol: getSymbol(project.name, settings.symbol),
       chainId: settings.chainId,
       maxSupply: project.supply,
@@ -317,6 +335,7 @@ export default function OnchainExportPanel({
       saveSettings({
         ...settings,
         symbol: String(collection.symbol ?? ""),
+        sourceHeaderArt: typeof collection.sourceHeaderArt === "string" ? normalizeSourceHeaderArt(collection.sourceHeaderArt) : "",
         chainId: Number(collection.chainId ?? 4663),
         mintPriceEth: String(collection.mintPriceEth ?? "0"),
         maxMintsPerWallet: Number(collection.maxMintsPerWallet ?? 0),
@@ -358,6 +377,7 @@ export default function OnchainExportPanel({
   const warnings = useMemo(() => {
     const issues: string[] = [];
     if (!getSymbol(project.name, settings.symbol)) issues.push("Set a collection symbol.");
+    issues.push(...sourceHeaderIssues(settings.sourceHeaderArt));
     if (!/^\d+(\.\d{1,18})?$/.test(settings.mintPriceEth)) issues.push("Mint price must be a non-negative ETH amount with at most 18 decimals.");
     if (!SUPPORTED_CHAINS.some((chain) => chain.id === settings.chainId)) issues.push("Select a supported chain.");
     if (!Number.isInteger(settings.maxMintsPerWallet) || settings.maxMintsPerWallet < 0) issues.push("Public wallet limit must be 0 (unlimited) or higher.");
@@ -498,6 +518,13 @@ export default function OnchainExportPanel({
             <label>Supply (from project)<input className={`${fieldClass} opacity-70`} type="number" value={project.supply} readOnly /></label>
             <label>Public mint price ({settings.chainId === 137 ? "POL" : "ETH"}; 0 = free)<input className={fieldClass} inputMode="decimal" value={settings.mintPriceEth} onChange={(event) => update("mintPriceEth", event.target.value)} placeholder="0.001" /></label>
             <label>Public mints per wallet (0 = unlimited)<input className={fieldClass} type="number" min={0} step={1} value={settings.maxMintsPerWallet} onChange={(event) => update("maxMintsPerWallet", Number(event.target.value))} /></label>
+          </div>
+          <div className="space-y-2 border-t border-current pt-3">
+            <label htmlFor="mintbay-source-header" className="block font-bold">Creator message / ASCII art (optional)</label>
+            <p className="text-sm opacity-70">Adds a comment header to the future verified Solidity source. Not NFT artwork, metadata or on-chain storage. Maximum 4,096 bytes, 64 lines, 160 characters per line.</p>
+            <a href="https://www.asciiart.eu/text-to-ascii-art" target="_blank" rel="noopener noreferrer" className="text-sm underline">Create ASCII art ↗</a>
+            <textarea id="mintbay-source-header" className={`${fieldClass} min-h-40 resize-y whitespace-pre overflow-x-auto`} value={settings.sourceHeaderArt} onChange={(event) => update("sourceHeaderArt", normalizeSourceHeaderArt(event.target.value))} placeholder="Paste an ASCII logo or a short message..." rows={6} spellCheck={false} wrap="off" />
+            {settings.sourceHeaderArt && <details className="text-sm"><summary className="cursor-pointer font-bold">Preview Solidity comments</summary><pre className="mt-2 max-h-64 overflow-auto border border-current p-3 text-xs">{settings.sourceHeaderArt.split("\n").map(line => `// ${line}`).join("\n")}</pre></details>}
           </div>
           <p className="opacity-70">0 mint price = free. 0 wallet limit = unlimited. Creator mints share the collection supply.</p>
           <p className="border-l-4 border-current pl-3">Mintbay receives 5% of each paid primary mint to help cover infrastructure costs. Free mints have no Mintbay mint fee.</p>
