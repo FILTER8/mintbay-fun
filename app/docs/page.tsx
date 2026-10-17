@@ -8,12 +8,12 @@ export const metadata: Metadata = {
   description: 'Mintbay.fun developer handbook: immutable art builds, API endpoints, Net Protocol integration and Bankr agent-assisted deployment.',
 };
 
-const nav = [
+const nav: ReadonlyArray<{ heading: string; items: ReadonlyArray<readonly [string, string]> }> = [
   { heading: 'START HERE', items: [ ['overview', 'Overview'], ['quickstart', 'Quickstart'], ['architecture', 'Architecture'] ] },
   { heading: 'BUILD', items: [ ['studio-builds', 'Studio Builds'], ['api', 'API Reference'], ['contracts', 'Smart Contracts'] ] },
   { heading: 'INTEGRATIONS', items: [ ['net', 'Net Protocol'], ['bankr', 'Bankr Agents'] ] },
   { heading: 'ECOSYSTEM', items: [ ['remix', 'CC0 & Remix'], ['networks', 'Supported Chains'], ['roadmap', 'Roadmap'] ] },
-] as const;
+];
 
 function External({ href, children }: { href: string; children: React.ReactNode }) {
   return <a href={href} target="_blank" rel="noopener noreferrer" className="mbdocs-external">{children}<ArrowUpRight size={13} aria-hidden="true" /></a>;
@@ -82,8 +82,8 @@ export default function DocsPage() {
         </Section>
 
         <Section id="net" n="007" title="Built on Net Protocol" lead="Net Protocol is a decentralized on-chain messaging layer. It gives applications a public, queryable activity stream anchored to the blockchain.">
-          <div className="mbdocs-partner"><div className="mbdocs-partner-head"><GitBranch size={22}/><div><strong>NET PROTOCOL</strong><small>FOUNDATIONAL INTEGRATION</small></div></div><p>Mintbay's Net-integrated collection design uses the collection contract as the Net app. Mint and transfer activity can be published as messages indexed under that contract address, creating an open record other apps can query or build on.</p><div className="mbdocs-links"><External href="https://www.netprotocol.app/">Net Protocol</External><External href="https://docs.netprotocol.app/">Official Net docs</External><External href="https://github.com/stuckinaboot/net-public">Net open-source SDK</External></div></div>
-          <h3>Application messaging</h3><p>Net exposes <code>sendMessageViaApp</code> so a smart contract can publish a message attributed to an app and sender, with a text body, topic and bytes payload. The protocol indexes by app, sender and topic. <strong>Mintbay's precise emitted topics and chain deployments depend on its final collection contract.</strong></p>
+          <div className="mbdocs-partner"><div className="mbdocs-partner-head"><GitBranch size={22}/><div><strong>NET PROTOCOL</strong><small>FOUNDATIONAL INTEGRATION</small></div></div><p>Mintbay&apos;s Net-integrated collection design uses the collection contract as the Net app. Mint and transfer activity can be published as messages indexed under that contract address, creating an open record other apps can query or build on.</p><div className="mbdocs-links"><External href="https://www.netprotocol.app/">Net Protocol</External><External href="https://docs.netprotocol.app/">Official Net docs</External><External href="https://github.com/stuckinaboot/net-public">Net open-source SDK</External></div></div>
+          <h3>Application messaging</h3><p>Net exposes <code>sendMessageViaApp</code> so a smart contract can publish a message attributed to an app and sender, with a text body, topic and bytes payload. The protocol indexes by app, sender and topic. <strong>Mintbay&apos;s precise emitted topics and chain deployments depend on its final collection contract.</strong></p>
           <Code label="NET INTERFACE / SOLIDITY">{`interface INet {
   function sendMessageViaApp(
     address sender,
@@ -92,7 +92,7 @@ export default function DocsPage() {
     bytes calldata data
   ) external;
 }`}</Code>
-          <p>Net's official docs list deployed networks and contract addresses. Do not assume Net is available on every Mintbay Studio chain without confirming its deployment first.</p>
+          <p>Net&apos;s official docs list deployed networks and contract addresses. Do not assume Net is available on every Mintbay Studio chain without confirming its deployment first.</p>
         </Section>
 
         <Section id="bankr" n="008" title="Bankr Agents" lead="Bankr provides an AI agent runtime with wallets, tool access and smart-contract execution capabilities.">
