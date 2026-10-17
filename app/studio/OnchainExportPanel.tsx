@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const SETTINGS_KEY = "mintbay-pixelstudio-onchain-v5";
-const API_BASE_URL = process.env.NEXT_PUBLIC_MINTBAY_API_BASE_URL || "https://api.mintbay.xyz";
+const API_BASE_URL = process.env.NEXT_PUBLIC_MINTBAY_API_BASE_URL || "https://api.mintbay.fun";
 const NET_SKILL_URL = "https://github.com/FILTER8/mintbay-agent";
 const DEFAULT_HOODIE_CONTRACT = "0x9Ec6C5b9f572A9B02138E553BC5F5882Da735F45";
 const HOODIE_351_WALLET = "0xd3d65519d2285f7100eba318eb2ccc4b1763ca43";
