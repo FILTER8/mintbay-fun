@@ -131,8 +131,13 @@ function sourceHeaderIssues(value: string): string[] {
   if (new TextEncoder().encode(value).length > 4096) issues.push("Creator message must be 4,096 bytes or fewer.");
   const lines = value.split("\n");
   if (lines.length > 64) issues.push("Creator message must be 64 lines or fewer.");
-  if (lines.some(line => line.length > 160)) issues.push("Creator message lines must be 160 characters or fewer.");
-  if (!/^[\x09\x0A\x20-\x7E]*$/.test(value)) issues.push("Creator message accepts printable ASCII, tabs and newlines only.");
+  if (lines.some(line => Array.from(line).length > 160)) issues.push("Creator message lines must be 160 Unicode characters or fewer.");
+  // Allow visible Unicode (including box drawing, block glyphs, accented text and emoji).
+  // Reject control, formatting, surrogate, and Unicode line-separator characters.
+  // Tab and LF are the only allowed control characters.
+  if (/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(value.replace(/[\t\n]/g, ""))) {
+    issues.push("Creator message contains invisible formatting or control characters. Visible Unicode art is allowed.");
+  }
   return issues;
 }
 
@@ -520,10 +525,10 @@ export default function OnchainExportPanel({
             <label>Public mints per wallet (0 = unlimited)<input className={fieldClass} type="number" min={0} step={1} value={settings.maxMintsPerWallet} onChange={(event) => update("maxMintsPerWallet", Number(event.target.value))} /></label>
           </div>
           <div className="space-y-2 border-t border-current pt-3">
-            <label htmlFor="mintbay-source-header" className="block font-bold">Creator message / ASCII art (optional)</label>
-            <p className="text-sm opacity-70">Adds a comment header to the future verified Solidity source. Not NFT artwork, metadata or on-chain storage. Maximum 4,096 bytes, 64 lines, 160 characters per line.</p>
+            <label htmlFor="mintbay-source-header" className="block font-bold">Creator message / Unicode art (optional)</label>
+            <p className="text-sm opacity-70">Adds a comment header to the future verified Solidity source. Not NFT artwork, metadata or on-chain storage. Supports Unicode block art and text. Maximum 4,096 UTF-8 bytes, 64 lines, 160 characters per line.</p>
             <a href="https://www.asciiart.eu/text-to-ascii-art" target="_blank" rel="noopener noreferrer" className="text-sm underline">Create ASCII art ↗</a>
-            <textarea id="mintbay-source-header" className={`${fieldClass} min-h-40 resize-y whitespace-pre overflow-x-auto`} value={settings.sourceHeaderArt} onChange={(event) => update("sourceHeaderArt", normalizeSourceHeaderArt(event.target.value))} placeholder="Paste an ASCII logo or a short message..." rows={6} spellCheck={false} wrap="off" />
+            <textarea id="mintbay-source-header" className={`${fieldClass} min-h-40 resize-y whitespace-pre overflow-x-auto`} value={settings.sourceHeaderArt} onChange={(event) => update("sourceHeaderArt", normalizeSourceHeaderArt(event.target.value))} placeholder="Paste text art, a Unicode banner or a short message..." rows={6} spellCheck={false} wrap="off" />
             {settings.sourceHeaderArt && <details className="text-sm"><summary className="cursor-pointer font-bold">Preview Solidity comments</summary><pre className="mt-2 max-h-64 overflow-auto border border-current p-3 text-xs">{settings.sourceHeaderArt.split("\n").map(line => `// ${line}`).join("\n")}</pre></details>}
           </div>
           <p className="opacity-70">0 mint price = free. 0 wallet limit = unlimited. Creator mints share the collection supply.</p>
