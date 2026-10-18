@@ -16,3 +16,36 @@
 .mintbay-editor .text-xs{font-size:12px}
 .mintbay-editor .text-\[11px\]{font-size:12px}
 @media(max-width:800px){.primary-nav a{font-size:12px}.hero-lead{font-size:16px}.mintbay-editor{padding:12px}}
+
+/* Mintbay V5.1 collection, token and collector pages */
+.mb-gallery-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin:30px 0}.mb-art-card{display:block;text-decoration:none;color:inherit;border:2px solid currentColor;overflow:hidden;transition:transform .15s}.mb-art-card:hover{transform:translateY(-3px)}.mb-square{aspect-ratio:1/1;background:#e8e9e3;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#111;font-size:42px}.mb-square img{width:100%;height:100%;object-fit:contain;image-rendering:pixelated}.mb-card-text{padding:15px;display:grid;gap:9px}.mb-card-text strong{font-size:16px}.mb-card-text small{opacity:.7}.mb-card-text span{display:flex;align-items:center;gap:5px;font-weight:900;font-size:12px}.mb-create .mb-square{background:#ceff45;font-size:95px}.mb-collection-hero,.mb-token-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:36px;margin:36px 0}.mb-collection-info h1,.mb-token-detail h1{font-size:clamp(32px,5vw,72px);overflow-wrap:anywhere;line-height:1.05;margin:20px 0}.mb-collection-info p,.mb-token-detail p{margin:12px 0}.mb-mint{border:2px solid currentColor;padding:20px;margin:24px 0;display:flex;flex-direction:column;gap:14px}.mb-mint label{display:flex;align-items:center;gap:15px}.mb-mint input{width:75px;padding:8px;color:#111;background:#fff;border:1px solid #888}.mb-price{font-size:26px;font-weight:900}.mb-price small{font-size:11px}.mb-links{display:flex;gap:15px;flex-wrap:wrap;margin:16px 0}.mb-links a,.mb-links button{font-size:12px;text-decoration:underline;font-weight:bold}.mb-back{display:inline-block;margin:16px 0}.mb-section{margin-top:55px}.mb-section-title{font-size:clamp(22px,3vw,38px);font-weight:900;margin:30px 0 14px}.mb-prompt{padding:16px;border:1px solid currentColor;display:flex;align-items:center;gap:16px;justify-content:space-between;flex-wrap:wrap}.mb-prompt code{font-size:13px;max-width:75%;overflow-wrap:anywhere}.mb-token-image{max-width:650px}.mb-traits{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.mb-traits>div{border:1px solid currentColor;padding:14px;display:grid;gap:6px}.mb-traits small{opacity:.7}.mb-break{overflow-wrap:anywhere}.mb-profile-top,.mb-pages{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:20px 0}.mb-profile-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px}.mb-profile-grid .mb-square{font-size:20px}.mb-profile-start{margin:30px 0}@media(max-width:780px){.mb-gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.mb-collection-hero,.mb-token-layout{grid-template-columns:1fr;gap:16px}.mb-prompt code{max-width:100%}}@media(max-width:420px){.mb-gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.mb-profile-top{align-items:flex-start;flex-direction:column}}
+
+
+/* V5.2: contained, centered pixel artwork, compact collection grid */
+.mb-gallery-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.mb-gallery-grid .mb-square{aspect-ratio:1/1}
+.mb-gallery-grid .mb-square img{width:82%;height:82%;object-fit:contain;object-position:center;display:block}
+.mb-token-image{width:100%;max-width:560px;justify-self:center}
+.mb-token-image img{width:84%;height:84%;object-fit:contain;object-position:center;display:block}
+.mb-profile-grid .mb-square{background:#f7f7f1}
+.mb-profile-grid .mb-square img{width:82%;height:82%;object-fit:contain;object-position:center;display:block}
+.mb-status{display:inline-flex;align-items:center;gap:8px;font-weight:900;font-size:12px;border:1px solid currentColor;padding:8px 12px;margin:12px 0}
+.mb-status.minted-out{background:#e5e5de}
+.mb-token-download{margin-top:12px}
+@media(max-width:950px){.mb-gallery-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:780px){.mb-gallery-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:420px){.mb-gallery-grid{gap:9px}.mb-gallery-grid .mb-square img{width:85%;height:85%}}
+
+/* V5.2.1: NFT art must be full bleed, never inset by card-specific scaling.
+   The SVG's own transparent/background pixels remain untouched. */
+.mb-gallery-grid .mb-square img,
+.mb-profile-grid .mb-square img,
+.mb-collection-hero .mb-square img,
+.mb-token-layout .mb-token-image img {
+  display:block; width:100%; height:100%; max-width:none; max-height:none;
+  object-fit:fill; object-position:center; image-rendering:pixelated;
+}
+.mb-gallery-grid .mb-square,
+.mb-profile-grid .mb-square,
+.mb-collection-hero .mb-square,
+.mb-token-layout .mb-token-image { padding:0; }
