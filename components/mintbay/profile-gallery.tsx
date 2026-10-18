@@ -103,32 +103,13 @@ function ProfileGalleryForAddress({ address }: { address: string }) {
     return blobFromCanvas(canvas);
   }
 
-  async function shareGallery() {
-    setExporting(true);
-    setErr('');
-    try {
-      const png = await makeGalleryPng();
-      const filename = `mintbay-${address.slice(0, 8)}-latest-16.png`;
-      const profileUrl = `${SITE}/profile/${address.toLowerCase()}`;
-      const text = 'My latest on-chain art on Mintbay ✳';
-      const file = new File([png], filename, { type: 'image/png' });
-      const shareData: ShareData = { files: [file], text, url: profileUrl };
-      if (navigator.share && navigator.canShare?.(shareData)) {
-        try { await navigator.share(shareData); return; }
-        catch (error) {
-          if (error instanceof DOMException && error.name === 'AbortError') return;
-          // Fall through to the download + X compose experience.
-        }
-      }
-      // X intent cannot attach a locally generated PNG. Download it and let
-      // the user add the image to the composer manually.
-      saveBlob(png, filename);
-      const intent = `https://twitter.com/intent/tweet?${new URLSearchParams({ text, url: profileUrl })}`;
-      window.open(intent, '_blank', 'noopener,noreferrer');
-      setErr('PNG downloaded. Attach it to your X post to show the 4×4 gallery.');
-    } catch (error) {
-      setErr(error instanceof Error ? error.message : 'Gallery sharing failed');
-    } finally { setExporting(false); }
+  function shareGallery() {
+    // X renders the public profile's server-generated 4x4 Open Graph image.
+    // No manual PNG download or attachment needed.
+    const url = `${SITE}/profile/${address.toLowerCase()}`;
+    const text = 'My latest fully on-chain art on Mintbay ✳';
+    const intent = `https://twitter.com/intent/tweet?${new URLSearchParams({ text, url })}`;
+    window.open(intent, '_blank', 'noopener,noreferrer');
   }
 
   async function exportLatest() {
