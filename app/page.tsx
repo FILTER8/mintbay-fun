@@ -37,7 +37,7 @@ export default function Home() {
           </div>
           <h1>
             MAKE ART.<br />
-            <span className="outline-type">HAKE</span>{' '}
+            <span className="outline-type">HAVE</span>{' '}
             <span className="highlight-type">FUN<span className="punctuation">.</span></span>
           </h1>
           <p className="hero-lead">
