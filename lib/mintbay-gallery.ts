@@ -148,17 +148,25 @@ export async function ownerTokens(owner:string):Promise<NFT[]>{
   const b=contracts.slice(batch,batch+45);let pageKey:string|undefined;let pages=0;
   do{
    if(++pages>100)throw Error('Gallery too large to fully load; try again later');
-   const params:Record<string,string>={owner,withMetadata:'true',pageSize:'100'};
+   const params:Record<string,string>={owner,withMetadata:'true',pageSize:'100',orderBy:'transferTime'};
    b.forEach((a,i)=>params[`contractAddresses[${i}]`]=a);
    if(pageKey)params.pageKey=pageKey;
-   const d=await alchemy('getNFTsForOwner',params);
+   const d=await alchemy('getNFTsForOwner',params,4663,true);
    if (!Array.isArray(at(d,'ownedNfts'))) throw Error('Unexpected NFT ownership response');
    all.push(...asArray(at(d,'ownedNfts')).map((v:unknown)=>nftOf(v)));
    pageKey=asText(at(d,'pageKey')) || undefined;
   }while(pageKey);
  }
- // Prefer verified mint/acquisition timestamps; ties use token number. Newest first.
- all.sort((a,b)=>(Date.parse(b.acquiredAt||'')||0)-(Date.parse(a.acquiredAt||'')||0)||Number(BigInt(b.tokenId)-BigInt(a.tokenId)));
+ // Sort newest ownership transfer first; never compare token IDs across collections as a date.
+ // Alchemy orderBy=transferTime returns newest-first pages; prefer timestamp when present.
+ all.sort((a,b)=>{
+  const ta=Date.parse(a.acquiredAt||'');
+  const tb=Date.parse(b.acquiredAt||'');
+  const aValid=Number.isFinite(ta), bValid=Number.isFinite(tb);
+  if(aValid && bValid) return tb-ta;
+  if(aValid !== bValid) return aValid ? -1 : 1;
+  return 0; // Preserve indexer transfer-time order if timestamp is unavailable.
+ });
  return all;
 }
 

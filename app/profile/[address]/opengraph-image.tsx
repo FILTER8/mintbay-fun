@@ -6,7 +6,7 @@ export const alt = 'Mintbay collector gallery: latest 16 fully on-chain NFTs';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 // Avoid repeated Alchemy lookups for each social-crawler request.
-export const revalidate = 3600;
+export const revalidate = 60;
 
 type Props = { params: Promise<{ address: string }> };
 
