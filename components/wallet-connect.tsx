@@ -94,7 +94,7 @@ export function WalletConnect() {
               <div className="popover-foot">
                 {walletConnectAvailable
                   ? 'On mobile, choose WalletConnect to open your wallet app. Browser Wallet works inside wallet browsers and desktop extensions.'
-                  : 'To enable connections from mobile Safari, configure NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID. Coinbase Wallet is also available.'}
+                  : 'To enable connections from mobile Safari, configure NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID. '}
               </div>
               {error && <div className="popover-error" role="alert">{error.message.slice(0, 180)}</div>}
             </>

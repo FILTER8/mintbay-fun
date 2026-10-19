@@ -2,7 +2,7 @@
 
 import { type ReactNode, useState } from 'react';
 import { createConfig, http, WagmiProvider } from 'wagmi';
-import { injected, walletConnect, coinbaseWallet } from 'wagmi/connectors';
+import { injected, walletConnect } from 'wagmi/connectors';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { supportedChains } from '@/lib/chains';
 
@@ -11,7 +11,6 @@ const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID?
 
 const connectors = [
   injected({ shimDisconnect: true }),
-  coinbaseWallet({ appName: 'Mintbay.fun', preference: 'eoaOnly' }),
   ...(walletConnectProjectId
     ? [walletConnect({
         projectId: walletConnectProjectId,
