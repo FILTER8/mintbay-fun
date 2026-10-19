@@ -49,3 +49,10 @@
 .mb-profile-grid .mb-square,
 .mb-collection-hero .mb-square,
 .mb-token-layout .mb-token-image { padding:0; }
+
+/* Homepage V5.2.2: let square artwork determine carousel height.
+   Override legacy fixed-height .art-stage rules (including mobile breakpoints). */
+.hero-right,.hero-right .art-window,.hero-right .art-stage{min-width:0}
+.hero-right .art-stage{height:auto;min-height:0;display:block;overflow:hidden}
+.hero-right .mb-home-carousel-art{width:100%;height:auto;aspect-ratio:1 / 1;flex:none;overflow:hidden}
+.hero-right .mb-home-carousel-art img{width:100%;height:100%;object-fit:contain;object-position:center;image-rendering:pixelated}
