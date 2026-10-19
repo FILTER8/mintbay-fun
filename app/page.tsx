@@ -35,13 +35,16 @@ export default async function Home() {
   return (
     <>
       <style>{`
-        .mb-home-carousel{display:flex;flex-direction:column;width:100%;height:100%;min-height:0;padding:12px;box-sizing:border-box;gap:10px}
-        .mb-home-carousel-track{position:relative;display:flex;flex:1;min-height:0;width:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;gap:12px}
+        /* Artwork stays square regardless of viewport or hero column height. */
+        .hero-right .art-stage{display:block;height:auto!important;min-height:0!important;aspect-ratio:auto!important;overflow:hidden}
+        .hero-right .art-window{min-width:0}
+        .mb-home-carousel{display:flex;flex-direction:column;width:100%;height:auto;min-height:0;padding:12px;box-sizing:border-box;gap:10px}
+        .mb-home-carousel-track{position:relative;display:flex;flex:none;min-height:0;width:100%;overflow-x:auto;overflow-y:hidden;scroll-snap-type:x mandatory;scrollbar-width:none;overscroll-behavior-x:contain;gap:12px}
         .mb-home-carousel-track::-webkit-scrollbar{display:none}
         .mb-home-carousel-slide{position:relative;flex:0 0 100%;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden;border:2px solid #151614;background:#f7f7f1;color:#151614;text-decoration:none;scroll-snap-align:start;scroll-snap-stop:always}
-        .mb-home-carousel-art{position:relative;flex:1;min-height:0;background:#eeeee9;display:flex;align-items:center;justify-content:center;overflow:hidden}
+        .mb-home-carousel-art{position:relative;flex:none;width:100%;aspect-ratio:1 / 1;min-height:0;background:#eeeee9;display:flex;align-items:center;justify-content:center;overflow:hidden}
         .mb-home-carousel-art img{display:block;width:100%;height:100%;object-fit:contain;image-rendering:pixelated}
-        .mb-home-carousel-caption{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-top:2px solid #151614;background:#f7f7f1}
+        .mb-home-carousel-caption{flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-top:2px solid #151614;background:#f7f7f1}
         .mb-home-carousel-caption span{min-width:0;display:flex;flex-direction:column;gap:3px}
         .mb-home-carousel-caption small{font-size:10px;letter-spacing:.08em;opacity:.65;font-weight:700}
         .mb-home-carousel-caption strong{font-size:clamp(13px,1.3vw,18px);font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
