@@ -131,12 +131,10 @@ function makeLayer(name: string, gridSize: number): Layer {
 function makeInitialProject(): Project {
   return {
     name: "Pixel Collection",
-    gridSize: 32,
+    gridSize: 8,
     supply: 100,
     layers: [
-      makeLayer("Background", 32),
-      makeLayer("Body", 32),
-      makeLayer("Accessory", 32),
+      makeLayer("Background", 8),
     ],
     updatedAt: new Date().toISOString(),
   };
@@ -2083,11 +2081,10 @@ export default function PixelEditorPage() {
                   <h3 className="font-bold">Palette helper</h3>
                   <a href={LOSPEC_LIST} target="_blank" rel="noopener noreferrer" className="underline">Browse Lospec ↗</a>
                 </div>
-                <p className="my-2 opacity-75">Use colors for inspiration. They are not saved into artwork.json unless you paint with them.</p>
                 <textarea
                   value={paletteInput}
                   onChange={(event) => setPaletteInput(event.target.value)}
-                  placeholder={"https://lospec.com/palette-list/sweetie-16\nOR #1a1c2c, #5d275d, #b13e53"}
+                  placeholder={"https://lospec.com/palette-list/sweetie-16"}
                   rows={3}
                   className={`w-full resize-y border-2 p-2 ${ui.input}`}
                 />

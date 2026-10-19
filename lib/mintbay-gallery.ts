@@ -19,7 +19,7 @@ export async function collections():Promise<Collection[]> {
 export async function collection(address:string):Promise<Collection|null>{return (await collections()).find(c=>c.contractAddress.toLowerCase()===address.toLowerCase())||null;}
 const hosts:Record<number,string>={4663:'robinhood-mainnet',8453:'base-mainnet',1:'eth-mainnet'};
 function alchemyUrl(chain=4663){const k=process.env.ALCHEMY_API_KEY;if(!k)return null;return `https://${hosts[chain]}.g.alchemy.com/nft/v3/${k}`;}
-async function alchemy(method:string,params:Record<string,string>,chain=4663){const base=alchemyUrl(chain);if(!base)throw Error('ALCHEMY_API_KEY must be configured on server');const q=new URLSearchParams();for(const [k,v] of Object.entries(params))q.append(k.startsWith('contractAddresses[')?'contractAddresses[]':k,v);const r=await fetch(`${base}/${method}?${q}`,{next:{revalidate:90}});if(!r.ok)throw Error(`Alchemy NFT API: ${r.status} (${method})`);return r.json();}
+async function alchemy(method:string,params:Record<string,string>,chain=4663,fresh=false){const base=alchemyUrl(chain);if(!base)throw Error('ALCHEMY_API_KEY must be configured on server');const q=new URLSearchParams();for(const [k,v] of Object.entries(params))q.append(k.startsWith('contractAddresses[')?'contractAddresses[]':k,v);const r=await fetch(`${base}/${method}?${q}`,fresh?{cache:'no-store'}:{next:{revalidate:90}});if(!r.ok)throw Error(`Alchemy NFT API: ${r.status} (${method})`);return r.json();}
 type JsonMap = Record<string, unknown>;
 const asObj = (v: unknown): JsonMap => (typeof v === 'object' && v !== null && !Array.isArray(v) ? v as JsonMap : {});
 const asArray = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
@@ -103,8 +103,18 @@ export async function token(address:string,id:string):Promise<NFT|null>{
   return item;
  }catch{return null;} // ownerOf reverts for burned / never-minted tokens
 }
-export async function collectionTokens(address:string,startToken='0',limit=24):Promise<{tokens:NFT[];next:string|null}>{
- const data=await alchemy('getNFTsForCollection',{contractAddress:address,withMetadata:'true',startToken,limit:String(limit)});
+// Cache image metadata only; ownership is always verified separately on chain.
+const cachedTokenMetadata = unstable_cache(
+ async (address: string, tokenId: string) => {
+  const uri = String(await rpcCall(address, 'tokenURI', [BigInt(tokenId)]));
+  return decodeTokenUri(uri);
+ },
+ ['mintbay-token-artwork-v1'],
+ { revalidate: 300 }
+);
+
+export async function collectionTokens(address:string,startToken='0',limit=24,fresh=false):Promise<{tokens:NFT[];next:string|null}>{
+ const data=await alchemy('getNFTsForCollection',{contractAddress:address,withMetadata:'true',startToken,limit:String(limit)},4663,fresh);
  const items=asArray(at(data,'nfts'));
  // A token might still be present in Alchemy metadata after a burn. Verify ownerOf.
  // This page is limited to 24 items, and checks run concurrently with a cap.
@@ -117,7 +127,7 @@ export async function collectionTokens(address:string,startToken='0',limit=24):P
     // Always prefer the immutable on-chain SVG rather than an Alchemy thumbnail.
     // Two bounded RPC reads per visible token, not a continuous indexer scan.
     try{
-     const raw=decodeTokenUri(String(await rpcCall(address,'tokenURI',[BigInt(n.tokenId)])));
+     const raw=await cachedTokenMetadata(address,n.tokenId);
      if(typeof raw?.image==='string' && (/^data:image\//.test(raw.image)||/^https:\/\//.test(raw.image)))n.image=raw.image;
      if(typeof raw?.name==='string')n.name=raw.name;
      if(Array.isArray(raw?.attributes))n.attributes=attributesOf(raw.attributes);

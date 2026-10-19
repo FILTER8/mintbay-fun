@@ -3,6 +3,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 const SETTINGS_KEY = "mintbay-pixelstudio-onchain-v5";
+const DEFAULT_CREATOR_MESSAGE = [
+  "+------------------------+",
+  "|  MAKE ART HAVE FUN    |",
+  "+------------------------+",
+].join("\n");
+
+function replaceOldSampleArt(value: string | undefined): string {
+  if (!value || !value.trim()) return DEFAULT_CREATOR_MESSAGE;
+  // Remove the previously shipped COOL DUDES sample, without overwriting genuine creator art.
+  if (/COOL\s*DUDES/i.test(value) || (value.includes('$$$$$$') && value.includes('# |'))) return DEFAULT_CREATOR_MESSAGE;
+  return value;
+}
 const API_BASE_URL = process.env.NEXT_PUBLIC_MINTBAY_API_BASE_URL || "https://api.mintbay.fun";
 const MINTBAY_SKILL_URL = "https://github.com/FILTER8/mintbay-agent";
 const DEFAULT_HOODIE_CONTRACT = "0x9Ec6C5b9f572A9B02138E553BC5F5882Da735F45";
@@ -68,7 +80,7 @@ type OnchainSettings = {
 
 const defaultSettings: OnchainSettings = {
   symbol: "",
-  sourceHeaderArt: "",
+  sourceHeaderArt: DEFAULT_CREATOR_MESSAGE,
   chainId: 4663,
   mintPriceEth: "0.001",
   maxMintsPerWallet: 20,
@@ -98,20 +110,6 @@ const defaultSettings: OnchainSettings = {
   burnClaimCollection: "",
   oneShotEnabled: false,
 };
-
-function saveJson(filename: string, data: unknown) {
-  const blob = new Blob([JSON.stringify(data, null, 2) + "\n"], {
-    type: "application/json",
-  });
-  const href = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = href;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(href), 1000);
-}
 
 function addressOrNull(value: string): string | null {
   return value.trim() || null;
@@ -226,11 +224,8 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
 }
 
 function buildBankrDeployPrompt(buildUrl: string) {
-  return `@bankrbot deploy my Mintbay NFT collection on Robinhood Chain (4663).\n\nBuild: ${buildUrl}\nOfficial skill: https://github.com/FILTER8/mintbay-agent\n\nUpdate/install the official Mintbay skill. Use the V5.1 generator and scripts/prepare-deploy.mjs to validate immutable artifact hashes, generate the collection Solidity, compile it with pinned dependencies, and check the EIP-170/EIP-3860 limits. Use Bankr's native deploy_contract workflow (CREATE2), NOT submit_raw_transaction with to:null.\n\nPreserve the configuration exactly: set initialOwner to deployment.expectedDeployer, use the configured creator payout and royalties, automatic 5% Mintbay protocol fee, ten-attempt best-effort trait duplicate prevention, approved Holder Claim and Burn & Claim sources, and all enabled mint features. Do not silently change unsupported settings.\n\nBefore broadcasting, show the collection name, contract name, chain, final owner, payout/royalty receivers, enabled features, runtime size, predicted contract address and gas estimate. Ask me to approve the deployment.\n\nAfter approval, deploy, await confirmation, verify source using the generated StandardInput.json, and return the transaction hash, contract address and explorer verification link. Post one Net Protocol announcement to feed-<contractAddress> using the official Net skill and return that separate transaction link; a failed announcement must not invalidate the deployment. Report verification as pending until confirmed. Never request or expose my private key.`;
-}
-
-function buildCreatorMintPrompt(collection: string, recipient: string, quantity: number) {
-  return `@bankrbot mint exactly ${quantity} NFT${quantity === 1 ? "" : "s"} from the creator allowance of this Mintbay collection on Robinhood Chain: ${collection}\n\nCall creatorMint(${recipient}, ${quantity}) using the current contract owner. Send the NFTs to ${recipient}. Use the free creator allowance, not paid public minting.\n\nReturn the minted token IDs, transaction hash, and Robinhood Etherscan link. Do not execute other transactions.`;
+  const buildId = buildUrl.split("/").filter(Boolean).pop() || buildUrl;
+  return `@bankrbot deploy my Mintbay NFT collection on Robinhood Chain.\nBuild ID: ${buildId}\nUse the official Mintbay skill.\nShow the contract transaction and verify the contracts.`;
 }
 
 export default function OnchainExportPanel({
@@ -241,11 +236,11 @@ export default function OnchainExportPanel({
   isDark: boolean;
 }) {
   const [settings, setSettings] = useState<OnchainSettings>(defaultSettings);
-  const importConfigRef = useRef<HTMLInputElement | null>(null);
+  const [step, setStep] = useState(1);
+  const wizardRef = useRef<HTMLDivElement | null>(null);
+  const checksRef = useRef<HTMLDivElement | null>(null);
+  const [showChecks, setShowChecks] = useState(false);
   const [feedback, setFeedback] = useState("");
-  const [mintContract, setMintContract] = useState("");
-  const [mintRecipient, setMintRecipient] = useState("");
-  const [mintQuantity, setMintQuantity] = useState(1);
   const [publishPassword, setPublishPassword] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [publishedUrl, setPublishedUrl] = useState("");
@@ -263,6 +258,7 @@ export default function OnchainExportPanel({
           setSettings({
             ...defaultSettings,
             ...parsed,
+            sourceHeaderArt: replaceOldSampleArt(parsed.sourceHeaderArt),
             holderSources: Array.isArray(parsed.holderSources) && parsed.holderSources.length
               ? parsed.holderSources.slice(0, 5)
               : [{ contract: parsed.holderCollection || (parsed.chainId === 4663 || parsed.chainId == null ? DEFAULT_HOODIE_CONTRACT : ""), priceEth: "0" }],
@@ -325,64 +321,6 @@ export default function OnchainExportPanel({
     setFeedback("Loaded Hoodie #351 sample settings — confirm your project artwork and supply.");
   }
 
-  async function importExistingConfig(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const data = JSON.parse(await file.text());
-      if (!data || typeof data !== "object" || !data.collection || !data.deployment || !data.features) {
-        throw new Error("Not a Mintbay collection config");
-      }
-      const collection = data.collection;
-      const features = data.features;
-      const deployment = data.deployment;
-      const eligibility = data.eligibility ?? {};
-      const v5 = data.mintbayV5 ?? {};
-      const adminMode: AdminMode = deployment.adminMode === "hoodwallet" ||
-        String(deployment.baseContract ?? "").includes("/hoodwallet/")
-        ? "hoodwallet" : "standard";
-      saveSettings({
-        ...settings,
-        symbol: String(collection.symbol ?? ""),
-        sourceHeaderArt: typeof collection.sourceHeaderArt === "string" ? normalizeSourceHeaderArt(collection.sourceHeaderArt) : "",
-        chainId: Number(collection.chainId ?? 4663),
-        mintPriceEth: String(collection.mintPriceEth ?? "0"),
-        maxMintsPerWallet: Number(collection.maxMintsPerWallet ?? 0),
-        creatorReserve: Number(collection.creatorReserve ?? 0),
-        royaltyBps: Number(collection.royaltyBps ?? 0),
-        royaltyReceiver: String(collection.royaltyReceiver ?? ""),
-        royaltySameAsDeployer: Boolean(collection.royaltyReceiver && collection.royaltyReceiver === (deployment.expectedDeployer ?? collection.deployerAddress)),
-        adminMode,
-        deployerAddress: String(deployment.expectedDeployer ?? deployment.initialOwner ?? collection.deployerAddress ?? ""),
-        standardRoyalties: Boolean(features.standardRoyalties),
-        royaltyMode: (v5.royalties?.mode === "enforced" || features.enforcedRoyalties) ? "enforced" : ((v5.royalties?.mode === "none" || (!features.standardRoyalties && !v5.royalties?.enabled)) ? "none" : "erc2981"),
-        transferableOwnership: Boolean(v5.ownershipTransfer?.enabled ?? features.transferableOwnership),
-        oneFreeMintPerHoodie: Boolean(features.oneFreeMintPerHoodie),
-        hoodieContract: String(eligibility.hoodieContract ?? DEFAULT_HOODIE_CONTRACT),
-        burnForClaim: Boolean(features.burnForClaim),
-        claimContractAddress: "",
-        creatorMintEnabled: Boolean(v5.creatorMint?.enabled ?? (Number(collection.creatorReserve ?? 0) > 0)),
-        supplyReductionEnabled: Boolean(v5.supplyReduction?.enabled),
-        payoutRecipient: String(v5.payoutRecipient ?? collection.payoutRecipient ?? ""),
-        payoutSameAsDeployer: Boolean(v5.payoutRecipient && v5.payoutRecipient === (deployment.expectedDeployer ?? collection.deployerAddress)),
-        holderClaimEnabled: Boolean(v5.holderClaim?.enabled ?? features.oneFreeMintPerHoodie),
-        holderSources: Array.isArray(v5.holderClaim?.sourceCollections) && v5.holderClaim.sourceCollections.length
-          ? v5.holderClaim.sourceCollections.slice(0, 5).map((item: { contract?: string; mintPriceEth?: string }) => ({ contract: String(item.contract ?? ""), priceEth: String(item.mintPriceEth ?? "0") }))
-          : [{ contract: String(v5.holderClaim?.sourceCollection ?? eligibility.hoodieContract ?? (Number(collection.chainId) === 4663 ? DEFAULT_HOODIE_CONTRACT : "")), priceEth: "0" }],
-        holderCollection: String(v5.holderClaim?.sourceCollection ?? eligibility.hoodieContract ?? ""),
-        claimsPerNft: Number(v5.holderClaim?.claimsPerToken ?? eligibility.freeMintsPerHoodieTokenId ?? 1),
-        burnClaimEnabled: Boolean(v5.burnAndClaim?.enabled),
-        burnClaimCollection: String(v5.burnAndClaim?.sourceCollections?.[0]?.contract ?? v5.burnAndClaim?.sourceCollections?.[0] ?? v5.burnAndClaim?.sourceCollection ?? ""),
-        oneShotEnabled: Boolean(v5.oneShot?.enabled),
-      });
-      setFeedback("Imported collection settings. Name and supply still come from the current artwork project.");
-    } catch {
-      setFeedback("Could not import config.json — check its format.");
-    } finally {
-      event.target.value = "";
-    }
-  }
-
   const warnings = useMemo(() => {
     const issues: string[] = [];
     if (!getSymbol(project.name, settings.symbol)) issues.push("Set a collection symbol.");
@@ -428,20 +366,25 @@ export default function OnchainExportPanel({
 
   const proposedConfig = useMemo(() => buildConfig(project, settings), [project, settings]);
 
-  function exportConfig() {
-    if (warnings.length) { setFeedback("Fix configuration errors before exporting V5 settings."); return; }
-    saveJson("config.json", proposedConfig);
-    setFeedback("Downloaded config.json.");
+  function goStep(next: number) {
+    setStep(Math.max(1, Math.min(4, next)));
+    window.requestAnimationFrame(() => wizardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
 
-  function exportArtwork() {
-    // Preserve the editor's actual Project JSON format, including IDs and exact weights.
-    saveJson("artwork.json", project);
-    setFeedback("Downloaded artwork.json.");
+  function errorStep(message: string): number {
+    if (/symbol|mint price|chain|wallet limit|creator message/i.test(message)) return 1;
+    if (/royalt|receiver|owner|deployer|payout|administrator|admin|ownership/i.test(message)) return 2;
+    if (/holder claim|burn & claim|burn-source|eligible|claims per|creator allowance/i.test(message)) return 3;
+    return 1;
+  }
+
+  function showValidation() {
+    setShowChecks(true);
+    window.requestAnimationFrame(() => checksRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }));
   }
 
   async function publishBuild() {
-    if (warnings.length) { setFeedback("Fix configuration errors before uploading."); return; }
+    if (warnings.length) { setFeedback("Fix the highlighted collection checks before publishing."); showValidation(); return; }
     if (!publishPassword.trim()) { setFeedback("Enter your publishing access code to upload to Mintbay API."); return; }
     setPublishing(true);
     setFeedback("Publishing immutable build to Mintbay API...");
@@ -474,23 +417,6 @@ export default function OnchainExportPanel({
     } catch { setFeedback("Clipboard unavailable; deployment prompt could not be copied."); }
   }
 
-  async function copyCreatorMintPrompt() {
-    if (!ADDRESS_PATTERN.test(mintContract.trim()) || !ADDRESS_PATTERN.test(mintRecipient.trim())) {
-      setFeedback("Enter a valid deployed collection address and recipient wallet address.");
-      return;
-    }
-    if (!Number.isInteger(mintQuantity) || mintQuantity < 1) {
-      setFeedback("Creator mint quantity must be a positive whole number.");
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(buildCreatorMintPrompt(mintContract.trim(), mintRecipient.trim(), mintQuantity));
-      setFeedback("Copied creator-mint prompt. Check remaining allowance before posting.");
-    } catch {
-      setFeedback("Clipboard unavailable. Please check browser clipboard permissions.");
-    }
-  }
-
   return (
     <section className="mx-auto max-w-6xl space-y-4">
       <div className={panelClass}>
@@ -509,8 +435,18 @@ export default function OnchainExportPanel({
         <p className="mt-3 border-l-4 border-current pl-3 opacity-80">Your artwork stays in your browser until you choose to publish the build. Publishing creates an immutable CC0 NFT art build, not a blockchain transaction.</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className={`${panelClass} space-y-3`}>
+      <div ref={wizardRef} className="scroll-mt-6 space-y-4">
+        <div className="grid grid-cols-4 gap-2" aria-label="Collection setup steps">
+          {(["MINT", "OWNER", "FEATURES", "PUBLISH"] as const).map((name, index) => {
+            const number = index + 1;
+            const hasError = warnings.some((warning) => errorStep(warning) === number);
+            return <button type="button" key={name} onClick={() => goStep(number)} aria-current={step === number ? "step" : undefined}
+              className={`border-2 px-2 py-3 text-center text-xs font-black sm:text-sm ${hasError ? "border-red-600 text-red-600" : step === number ? (isDark ? "border-white bg-white text-black" : "border-black bg-[#cbff45] text-black") : (isDark ? "border-white" : "border-black")}`}>
+              {String(number).padStart(2, "0")} <span className="hidden sm:inline">/ {name}</span>{hasError ? " !" : ""}
+            </button>;
+          })}
+        </div>
+        {step === 1 && <div className={`${panelClass} space-y-3`}>
           <h3 className="font-black uppercase">01 / Mint settings</h3>
           <p className="opacity-70">Collection name and max supply come from the Design tab.</p>
           <div className="grid grid-cols-2 gap-3">
@@ -532,15 +468,15 @@ export default function OnchainExportPanel({
           <div className="space-y-2 border-t border-current pt-3">
             <label htmlFor="mintbay-source-header" className="block font-bold">Creator message / Unicode art (optional)</label>
             <p className="text-sm opacity-70">Adds a comment header to the future verified Solidity source. Not NFT artwork, metadata or on-chain storage. Supports Unicode block art and text. Maximum 4,096 UTF-8 bytes, 64 lines, 160 characters per line.</p>
-            <a href="https://www.asciiart.eu/text-to-ascii-art" target="_blank" rel="noopener noreferrer" className="text-sm underline">Create ASCII art ↗</a>
-            <textarea id="mintbay-source-header" className={`${fieldClass} min-h-40 resize-y whitespace-pre overflow-x-auto`} value={settings.sourceHeaderArt} onChange={(event) => update("sourceHeaderArt", normalizeSourceHeaderArt(event.target.value))} placeholder="Paste text art, a Unicode banner or a short message..." rows={6} spellCheck={false} wrap="off" />
+            <p className="text-xs opacity-70">Edit or remove the framed message directly in the box below.</p>
+            <textarea id="mintbay-source-header" className={`${fieldClass} min-h-40 resize-y whitespace-pre overflow-x-auto`} value={settings.sourceHeaderArt} onChange={(event) => update("sourceHeaderArt", normalizeSourceHeaderArt(event.target.value))} placeholder="Your creator message (optional)" rows={6} spellCheck={false} wrap="off" />
             {settings.sourceHeaderArt && <details className="text-sm"><summary className="cursor-pointer font-bold">Preview Solidity comments</summary><pre className="mt-2 max-h-64 overflow-auto border border-current p-3 text-xs">{settings.sourceHeaderArt.split("\n").map(line => `// ${line}`).join("\n")}</pre></details>}
           </div>
           <p className="opacity-70">0 mint price = free. 0 wallet limit = unlimited. Creator mints share the collection supply.</p>
           <p className="border-l-4 border-current pl-3">Mintbay automatically receives 5% of each paid public mint or paid Holder Claim. The creator’s 95% remains withdrawable. Free mints have no protocol fee.</p>
-        </div>
+        </div>}
 
-        <div className={`${panelClass} space-y-3`}>
+        {step === 2 && <div className={`${panelClass} space-y-3`}>
           <h3 className="font-black uppercase">02 / Administrator & royalties</h3>
           <label className="block">Net base contract
             <select value={settings.adminMode} className={fieldClass} onChange={(event) => update("adminMode", event.target.value as AdminMode)}>
@@ -593,9 +529,9 @@ export default function OnchainExportPanel({
           )}
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.transferableOwnership} onChange={(event) => update("transferableOwnership", event.target.checked)} /> Transfer Ownership (optional)</label>
           <p className="opacity-70">Direct ownership transfer. Payout and royalty addresses stay unchanged; the new owner can update them.</p>
-        </div>
+        </div>}
 
-        <div className={`${panelClass} space-y-3`}>
+        {step === 3 && <div className={`${panelClass} space-y-3`}>
           <h3 className="font-black uppercase">03 / Optional features</h3>
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.creatorMintEnabled} onChange={(e) => update("creatorMintEnabled", e.target.checked)}/> Creator Mint</label>
           {settings.creatorMintEnabled && <label>Free creator mint allowance<input className={fieldClass} type="number" min={0} max={project.supply} value={settings.creatorReserve} onChange={(e) => update("creatorReserve", Number(e.target.value))}/></label>}
@@ -629,53 +565,46 @@ export default function OnchainExportPanel({
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.oneShotEnabled} onChange={(e) => update("oneShotEnabled", e.target.checked)}/> One Shot (Burn & Remint)</label>
           {settings.oneShotEnabled && <p className="pl-4 opacity-70">One free replacement per token lineage; requires unused lifetime supply. The replacement cannot be reminted again.</p>}
           <p className="opacity-70">All mint routes share one first-come-first-served lifetime supply. Mintbay V5.1 tries up to ten seeds to avoid repeating a trait combination; duplicates are permitted if all attempts collide. Standard authorized NFT burn remains available.</p>
-        </div>
+        </div>}
 
-        <div className={`${panelClass} space-y-3`}>
+        {step === 4 && <div className={`${panelClass} space-y-3`}>
           <h3 className="font-black uppercase">04 / Publish build & deploy with Bankr</h3>
           <p className="opacity-70">Publishes a hashed, immutable Studio build. Bankr generates and deploys the contract after you approve the transaction. Publishing itself does not spend ETH.</p>
+          <p className="text-sm opacity-75">Publishing is currently invite-only while Mintbay is in testing. Need an access code? <a className="underline font-bold" href="https://x.com/mintbay_xyz" target="_blank" rel="noreferrer">Contact Mintbay ↗</a></p>
           <label className="block">Publishing access code
             <input className={fieldClass} type="password" autoComplete="off" value={publishPassword} onChange={(event) => setPublishPassword(event.target.value)} placeholder="Enter access code" />
           </label>
-          <button type="button" className={buttonClass} disabled={publishing || warnings.length > 0} onClick={publishBuild}>{publishing ? "Publishing..." : "Upload collection to Mintbay"}</button>
+          <button type="button" className={buttonClass} disabled={publishing} onClick={publishBuild}>{publishing ? "Publishing..." : "Upload collection to Mintbay"}</button>
           {publishedUrl && <div className="space-y-2 border border-current p-3 break-all">
             <p className="font-bold">Uploaded collection build</p>
             <a href={publishedUrl} target="_blank" rel="noreferrer" className="underline">{publishedUrl}</a>
             <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} onClick={() => navigator.clipboard.writeText(publishedUrl)}>Copy build URL</button><button type="button" className={buttonClass} onClick={copyDeploymentPrompt}>Copy Bankr deployment prompt</button></div>
           </div>}
-          <details className="border-t border-current pt-3"><summary className="cursor-pointer font-bold uppercase">Optional / Download source JSON</summary>
-            <div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} onClick={exportArtwork}>Export artwork.json</button><button type="button" className={buttonClass} onClick={exportConfig}>Export config.json</button><button type="button" className={buttonClass} onClick={() => importConfigRef.current?.click()}>Import config.json</button><input type="file" accept="application/json,.json" className="hidden" ref={importConfigRef} onChange={importExistingConfig} /></div>
-          </details>
           <p className="opacity-70">After publishing, copy the production prompt and send it to Bankr. It will prepare the deployment and ask for final transaction approval.</p>
-          <details className="border-t border-current pt-3">
-            <summary className="cursor-pointer font-bold uppercase">Optional / Creator mint after deployment</summary>
-            <p className="my-2 opacity-70">Only use this after the collection is deployed. The current contract owner must authorize creatorMint(recipient, quantity). The free mint allowance is shared with the lifetime supply.</p>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <label>Deployed collection address<input className={fieldClass} placeholder="0x..." value={mintContract} onChange={(event) => setMintContract(event.target.value)} spellCheck={false}/></label>
-              <label>Recipient address<input className={fieldClass} placeholder="0x..." value={mintRecipient} onChange={(event) => setMintRecipient(event.target.value)} spellCheck={false}/></label>
-              <label>Creator mint quantity<input className={fieldClass} type="number" min={1} step={1} value={mintQuantity} onChange={(event) => setMintQuantity(Number(event.target.value))}/></label>
-            </div>
-            <button type="button" className={`${buttonClass} mt-3`} onClick={copyCreatorMintPrompt}>Copy creator mint prompt</button>
-          </details>
           {feedback && <p role="status" className="border-l-4 border-current pl-2 font-bold">{feedback}</p>}
+        </div>}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button type="button" className={buttonClass} disabled={step === 1} onClick={() => goStep(step - 1)}>← BACK</button>
+          <span className="font-mono text-sm">STEP {step} / 4</span>
+          {step < 4 ? <button type="button" className={`${buttonClass} ${isDark ? "bg-white text-black" : "bg-[#cbff45] text-black"}`} onClick={() => goStep(step + 1)}>NEXT →</button>
+            : <button type="button" className={buttonClass} onClick={() => goStep(1)}>REVIEW SETTINGS ↗</button>}
         </div>
       </div>
 
-      <div className={panelClass}>
-        <h3 className="font-black uppercase">Collection checks</h3>
+      <div ref={checksRef} className={`${panelClass} scroll-mt-6 ${warnings.length ? "border-red-600 text-red-600" : ""}`}>
+        <button type="button" onClick={() => setShowChecks(v => !v)} className="flex w-full items-center justify-between gap-2 text-left font-black uppercase">
+          <span>Collection checks {warnings.length ? `— ${warnings.length} TO FIX` : "— ALL GOOD"}</span><span>{showChecks || warnings.length ? "−" : "+"}</span>
+        </button>
+        {(showChecks || warnings.length > 0) && <>
         {warnings.length > 0 ? (
-          <div className="mt-2"><p className="font-bold">Please fix:</p><ul className="list-disc space-y-1 pl-5">{warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>
+          <div className="mt-2"><p className="font-bold">Please fix:</p><ul className="list-disc space-y-1 pl-5">{warnings.map((warning) => <li key={warning}><button type="button" className="text-left underline" onClick={() => goStep(errorStep(warning))}>{warning} → FIX IN STEP {errorStep(warning)}</button></li>)}</ul></div>
         ) : (
           <p className="mt-2">Configuration valid.</p>
         )}
         {notices.length > 0 && (
           <div className="mt-2"><p className="font-bold">Artwork rules:</p><ul className="list-disc space-y-1 pl-5">{notices.map((notice) => <li key={notice}>{notice}</li>)}</ul></div>
         )}
-        <p className="mt-2 text-xs"></p>
-        <details className="mt-3">
-          <summary className="cursor-pointer font-bold uppercase">Preview config.json</summary>
-          <pre className="mt-2 max-h-96 overflow-auto border border-current p-3 text-[11px]">{JSON.stringify(proposedConfig, null, 2)}</pre>
-        </details>
+        </>}
       </div>
     </section>
   );
