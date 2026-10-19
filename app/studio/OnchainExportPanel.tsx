@@ -223,9 +223,11 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
   };
 }
 
-function buildBankrDeployPrompt(buildUrl: string) {
+function buildBankrDeployPrompt(buildUrl: string, chainId: number) {
   const buildId = buildUrl.split("/").filter(Boolean).pop() || buildUrl;
-  return `@bankrbot deploy my Mintbay NFT collection on Robinhood Chain.\nBuild ID: ${buildId}\nUse the official Mintbay skill.\nShow the contract transaction and verify the contracts.`;
+  const chain = SUPPORTED_CHAINS.find((item) => item.id === chainId);
+  if (!chain) throw new Error(`Unsupported deployment chain: ${chainId}`);
+  return `@bankrbot deploy my Mintbay NFT collection on ${chain.name} (chain ID ${chain.id}).\nBuild ID: ${buildId}\nUse the official Mintbay skill.\nShow the contract transaction and verify the contracts.`;
 }
 
 export default function OnchainExportPanel({
@@ -261,7 +263,7 @@ export default function OnchainExportPanel({
             sourceHeaderArt: replaceOldSampleArt(parsed.sourceHeaderArt),
             holderSources: Array.isArray(parsed.holderSources) && parsed.holderSources.length
               ? parsed.holderSources.slice(0, 5)
-              : [{ contract: parsed.holderCollection || (parsed.chainId === 4663 || parsed.chainId == null ? DEFAULT_HOODIE_CONTRACT : ""), priceEth: "0" }],
+              : (parsed.chainId === 4663 || parsed.chainId == null ? [defaultHoodieSource()] : []),
             royaltySameAsDeployer: parsed.royaltySameAsDeployer ?? false,
           });
         }
@@ -325,8 +327,8 @@ export default function OnchainExportPanel({
     const issues: string[] = [];
     if (!getSymbol(project.name, settings.symbol)) issues.push("Set a collection symbol.");
     issues.push(...sourceHeaderIssues(settings.sourceHeaderArt));
-    if (!/^\d+(\.\d{1,18})?$/.test(settings.mintPriceEth)) issues.push("Mint price must be a non-negative ETH amount with at most 18 decimals.");
-    if (settings.chainId !== 4663) issues.push("Mintbay V5.1 Bankr deployment currently supports Robinhood Chain (4663) only.");
+    if (!ETH_PRICE_PATTERN.test(settings.mintPriceEth)) issues.push("Mint price must be a non-negative native-token amount (ETH or POL) with at most 18 decimals.");
+    if (!SUPPORTED_CHAINS.some((chain) => chain.id === settings.chainId)) issues.push("Select a supported blockchain.");
     if (settings.adminMode !== "standard") issues.push("Mintbay V5.1 currently supports standard owner addresses only; HoodWallet administration is not yet supported by the generator.");
     if (!Number.isInteger(settings.maxMintsPerWallet) || settings.maxMintsPerWallet < 0) issues.push("Public wallet limit must be 0 (unlimited) or higher.");
     if (settings.creatorMintEnabled && (!Number.isInteger(settings.creatorReserve) || settings.creatorReserve < 0 || settings.creatorReserve > project.supply)) issues.push("Creator allowance must be between 0 and total supply.");
@@ -412,7 +414,7 @@ export default function OnchainExportPanel({
   async function copyDeploymentPrompt() {
     if (!publishedUrl) { setFeedback("Publish a build first to obtain its immutable URL."); return; }
     try {
-      await navigator.clipboard.writeText(buildBankrDeployPrompt(publishedUrl));
+      await navigator.clipboard.writeText(buildBankrDeployPrompt(publishedUrl, settings.chainId));
       setFeedback("Copied production Bankr deployment prompt. Review Bankr’s deployment summary before approving.");
     } catch { setFeedback("Clipboard unavailable; deployment prompt could not be copied."); }
   }
@@ -455,7 +457,7 @@ export default function OnchainExportPanel({
             <label>Blockchain
               <select className={fieldClass} value={settings.chainId} onChange={(event) => {
                 const chainId = Number(event.target.value);
-                saveSettings({ ...settings, chainId, holderClaimEnabled: chainId === 4663, holderSources: chainId === 4663 ? (settings.holderSources.some((source) => source.contract.toLowerCase() === DEFAULT_HOODIE_CONTRACT.toLowerCase()) ? settings.holderSources : [defaultHoodieSource(), ...settings.holderSources.filter((source) => source.contract.trim()).slice(0, 4)]) : settings.holderSources.filter((source) => source.contract.toLowerCase() !== DEFAULT_HOODIE_CONTRACT.toLowerCase()) });
+                saveSettings({ ...settings, chainId, holderClaimEnabled: false, holderSources: [], burnClaimEnabled: false, burnClaimCollection: "" });
                 setPublishedUrl(""); setFeedback("");
               }}>
                 {SUPPORTED_CHAINS.map((chain) => <option key={chain.id} value={chain.id}>{chain.name} ({chain.id})</option>)}
@@ -569,7 +571,7 @@ export default function OnchainExportPanel({
 
         {step === 4 && <div className={`${panelClass} space-y-3`}>
           <h3 className="font-black uppercase">04 / Publish build & deploy with Bankr</h3>
-          <p className="opacity-70">Publishes a hashed, immutable Studio build. Bankr generates and deploys the contract after you approve the transaction. Publishing itself does not spend ETH.</p>
+          <p className="opacity-70">Publishes a hashed, immutable Studio build. Bankr generates and deploys the contract after you approve the transaction. Publishing itself does not spend ETH or POL.</p>
           <p className="text-sm opacity-75">Publishing is currently invite-only while Mintbay is in testing. Need an access code? <a className="underline font-bold" href="https://x.com/mintbay_xyz" target="_blank" rel="noreferrer">Contact Mintbay ↗</a></p>
           <label className="block">Publishing access code
             <input className={fieldClass} type="password" autoComplete="off" value={publishPassword} onChange={(event) => setPublishPassword(event.target.value)} placeholder="Enter access code" />
