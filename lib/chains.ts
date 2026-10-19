@@ -17,4 +17,4 @@ export const publicRpc:Record<number,string>={
   137:'https://polygon-bor-rpc.publicnode.com',130:'https://mainnet.unichain.org',42161:'https://arb1.arbitrum.io/rpc'
 };
 // Alchemy key is server-only; unconfigured chains use their public RPC. No secret is exposed to the client.
-export const alchemyNetwork:Partial<Record<number,string>>={1:'eth-mainnet',8453:'base-mainnet',137:'polygon-mainnet',42161:'arb-mainnet'};
+export const alchemyNetwork:Partial<Record<number,string>>={4663:'robinhood-mainnet',1:'eth-mainnet',8453:'base-mainnet',137:'polygon-mainnet',42161:'arb-mainnet'};
