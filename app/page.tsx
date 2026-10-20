@@ -118,11 +118,11 @@ export default async function Home() {
       <section className="manifesto section-wrap">
         <div className="section-index">[ 001 / THE IDEA ]</div>
         <div className="manifesto-layout">
-          <h2>ART MEETS<br /><em>AGENTS.</em></h2>
+          <h2>STYLE MEETS<br /><em>STRATEGY.</em></h2>
           <div>
-            <p>Mintbay makes creating, launching and collecting fully on-chain NFT collections fun and simple.</p>
-            <p>Every CC0 pixel collection expands the Agent data set — more collections, better output.</p>
-            <Link className="text-link" href="/manual">READ THE MANUAL <ArrowUpRight size={17} /></Link>
+            <p><strong>When creating becomes easy, creating something worth collecting becomes the challenge.</strong></p>
+            <p>Human creativity gives art its character. Smart contracts give collectors interesting choices. Agents make both more accessible.</p>
+            <Link className="text-link" href="/manifesto">READ OUR MANIFESTO <ArrowUpRight size={17} /></Link>
           </div>
         </div>
       </section>
