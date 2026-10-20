@@ -106,7 +106,9 @@ function ProfileGalleryForAddress({ address }: { address: string }) {
   function shareGallery() {
     // X renders the public profile's server-generated 4x4 Open Graph image.
     // No manual PNG download or attachment needed.
-    const url = `${SITE}/profile/${address.toLowerCase()}`;
+    // Use a fresh preview URL so X does not reuse a previously cached gallery card.
+    // The canonical profile URL is unchanged.
+    const url = `${SITE}/profile/${address.toLowerCase()}?gallery=${Date.now()}`;
     const text = 'My latest fully on-chain art on Mintbay ✳';
     const intent = `https://twitter.com/intent/tweet?${new URLSearchParams({ text, url })}`;
     window.open(intent, '_blank', 'noopener,noreferrer');

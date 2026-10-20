@@ -6,7 +6,7 @@ export const alt = 'Mintbay collector gallery: latest 16 fully on-chain NFTs';
 export const size = { width: 1200, height: 630 };
 export const contentType = 'image/png';
 // Avoid repeated Alchemy lookups for each social-crawler request.
-export const revalidate = 60;
+export const revalidate = 0; // Always regenerate; X caches previews independently.
 
 type Props = { params: Promise<{ address: string }> };
 
@@ -36,7 +36,6 @@ export default async function OpenGraphImage({ params }: Props) {
           return (
             <div key={item?.key || i} style={{ width: 135, height: 135, backgroundColor: '#f7f7f1', display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' }}>
               {item?.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
                 <img src={item.image} alt="" width="135" height="135" style={{ width: 135, height: 135, objectFit: 'contain', imageRendering: 'pixelated' }} />
               ) : <div style={{ width: 135, height: 135, background: '#e6e6e1', display: 'flex' }} />}
             </div>
