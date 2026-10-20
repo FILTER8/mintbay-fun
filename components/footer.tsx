@@ -12,7 +12,7 @@ export function Footer() {
           <a href="https://github.com/FILTER8/mintbay-agent" target="_blank" rel="noopener noreferrer">
             OPEN SOURCE ↗
           </a>
-          <a href="https://x.com/mintbay_xyz" target="_blank" rel="noopener noreferrer" aria-label="Mintbay on X">
+          <a href="https://x.com/mintbay_fun" target="_blank" rel="noopener noreferrer" aria-label="Mintbay on X">
             X ↗
           </a>
         </div>

@@ -26,7 +26,7 @@ export function Header() {
           <Link href="/profile">PROFILE</Link>
           <Link href="/manual">THE MANUAL</Link>
           <a
-            href="https://x.com/mintbay_xyz"
+            href="https://x.com/mintbay_fun"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="Mintbay on X (opens in a new tab)"

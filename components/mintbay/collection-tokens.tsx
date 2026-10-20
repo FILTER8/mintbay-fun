@@ -68,9 +68,13 @@ function LiveTokens({ address, initial, next }: {
     const id = window.setInterval(() => { void refresh(); }, POLL_MS);
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', onVisible);
-    // Verify the initial server-rendered data immediately after hydration.
-    void refresh();
-    return () => { window.clearInterval(id); document.removeEventListener('visibilitychange', onVisible); };
+    // Verify the server-rendered data on the next task, outside effect setup.
+    const initialRefreshId = window.setTimeout(() => { void refresh(); }, 0);
+    return () => {
+      window.clearTimeout(initialRefreshId);
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refresh]);
 
   async function loadMore() {
