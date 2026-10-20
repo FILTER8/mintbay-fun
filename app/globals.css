@@ -62,17 +62,17 @@
 .header-bankr-link{display:inline-flex;align-items:center;gap:6px}
 .header-mobile-menu{display:none}
 @media(max-width:1150px){
-  .site-header{height:74px;min-height:74px}
+  .site-header{height:74px;min-height:74px;position:relative;overflow:visible}
   .header-inner{height:100%;padding:0 18px;display:flex;align-items:center;flex-wrap:nowrap;gap:12px}
   .header-inner>.brand{min-width:0;margin-right:auto}
   .header-inner>.primary-nav{display:none}
-  .header-mobile-menu{display:block;position:relative;order:2;flex-shrink:0}
+  .header-mobile-menu{display:block;position:static;order:2;flex-shrink:0}
   .header-inner>.wallet-wrap{order:3;flex-shrink:0}
   .header-mobile-menu>summary{list-style:none;display:flex;align-items:center;justify-content:center;gap:7px;height:39px;padding:0 11px;border:1px solid var(--ink);background:var(--paper);font-size:11px;font-weight:900;cursor:pointer;user-select:none}
   .header-mobile-menu>summary::-webkit-details-marker{display:none}
   .header-mobile-menu[open]>summary{background:var(--lime)}
-  .header-mobile-panel{position:absolute;z-index:110;right:-2px;top:calc(100% + 17px);width:min(310px,calc(100vw - 28px));padding:9px;background:var(--paper);border:2px solid var(--ink);box-shadow:6px 6px 0 var(--ink);display:flex;flex-direction:column}
-  .header-mobile-panel>a{display:flex;align-items:center;gap:10px;padding:14px 12px;font-size:12px;font-weight:850;letter-spacing:.03em;border-bottom:1px solid var(--line);white-space:nowrap}
+  .header-mobile-panel{position:absolute;z-index:110;top:100%;left:0;right:0;width:100%;max-width:none;box-sizing:border-box;min-height:calc(100dvh - 74px);max-height:calc(100dvh - 74px);overflow-y:auto;overscroll-behavior:contain;padding:18px 20px 28px;background:var(--paper);border:0;border-top:2px solid var(--ink);box-shadow:none;display:flex;flex-direction:column}
+  .header-mobile-panel>a{display:flex;align-items:center;gap:12px;width:100%;box-sizing:border-box;padding:19px 8px;font-size:15px;font-weight:850;letter-spacing:.03em;border-bottom:1px solid var(--line);white-space:normal}
   .header-mobile-panel>a:last-child{border-bottom:0}
   .header-mobile-panel>a:hover,.header-mobile-panel>a:focus-visible{background:var(--lime);color:var(--ink)}
 }
@@ -86,3 +86,4 @@
 @media(max-width:420px){
   .header-inner>.brand>span{display:none}
 }
+
