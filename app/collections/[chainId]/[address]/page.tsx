@@ -19,8 +19,6 @@ export default async function CollectionPage({params}:Params){
  const mintState=await mintStatus(address);
  let initial={tokens:[],next:null} as Awaited<ReturnType<typeof collectionTokens>>;
  let error='';try{initial=await collectionTokens(address)}catch{error='NFT gallery is temporarily unavailable.';}
- const shareUrl=`https://mintbay.fun/collections/4663/${address.toLowerCase()}`;
- const xShareUrl=`https://twitter.com/intent/tweet?${new URLSearchParams({text:`Mint ${c.name} — fully on-chain pixel art on Robinhood Chain.`,url:shareUrl}).toString()}`;
  return <div className="interior section-wrap">
   <Link href="/collections" className="mb-back">← ALL COLLECTIONS</Link>
   <div className="mb-collection-hero">
@@ -29,7 +27,7 @@ export default async function CollectionPage({params}:Params){
     <span className="tag">[ ROBINHOOD CHAIN / FULLY ON-CHAIN ]</span>
     <h1>{c.name}</h1>
     <MintWidget address={address} fallbackPrice={c.mintPriceEth} maxSupply={c.maxSupply} status={mintState}/>
-    <div className="mb-links"><a href={opensea(address)} target="_blank" rel="noreferrer">OPENSEA ↗</a><a href={net(address)} target="_blank" rel="noreferrer">NET BAZAAR ↗</a><a href={explorer(address)} target="_blank" rel="noreferrer">CONTRACT ↗</a><CollectionActions name={c.name} address={address}/><a href={xShareUrl} target="_blank" rel="noopener noreferrer">SHARE ON X ↗</a></div>
+    <div className="mb-links"><a href={opensea(address)} target="_blank" rel="noreferrer">OPENSEA ↗</a><a href={net(address)} target="_blank" rel="noreferrer">NET BAZAAR ↗</a><a href={explorer(address)} target="_blank" rel="noreferrer">CONTRACT ↗</a><CollectionActions name={c.name} address={address}/></div>
    </div>
   </div>
   <div className="mb-section-title">MINT WITH A PROMPT.</div>
