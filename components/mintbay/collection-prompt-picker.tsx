@@ -9,8 +9,8 @@ export function CollectionPromptPicker({name,chainName,address}:Props){
  const [selected,setSelected]=useState(0);
  const where=`${name} on ${chainName}. Contract: ${address}.`;
  const prompts=[
-  {label:'MINT ONE',text:`@bankrbot mint one NFT from ${where}.`},
-  {label:'AM I ELIGIBLE?',text:`@bankrbot check if my wallet qualifies for a free Holder Claim from ${where} Explain which NFT I need to hold and how to claim.`},
+  {label:'MINT ONE',text:`@bankrbot mint one NFT from ${where}`},
+  {label:'AM I ELIGIBLE?',text:`@bankrbot check if my wallet qualifies for a free Holder Claim from ${where} Explain which NFT I need to hold and how to claim`},
   {label:'MY FREE CLAIMS',text:`@bankrbot how many free NFTs from ${where} can my wallet still claim? Check eligibility, previous claims, and remaining lifetime supply.`},
   {label:'COLLECTION STATUS',text:`@bankrbot check ${where} How many lifetime mint slots remain, what does minting cost, and is public mint currently available?`},
  ];
