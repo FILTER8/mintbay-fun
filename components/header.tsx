@@ -26,6 +26,16 @@ export function Header() {
           <Link href="/profile">PROFILE</Link>
           <Link href="/manual">THE MANUAL</Link>
           <a
+            href="https://bankr.bot/u/0xb316e8ea7bc9b24ea5fd4ebd07051678c27ffe79/apps/mintbay-monitor"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="Mintbay Bankr app (opens in a new tab)"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <Image src="/brand/bankr-symbol.svg" alt="" width={20} height={18} style={{ width: 20, height: 18, objectFit: 'contain' }} />
+            BANKR APP ↗
+          </a>
+          <a
             href="https://x.com/mintbay_fun"
             target="_blank"
             rel="noopener noreferrer"

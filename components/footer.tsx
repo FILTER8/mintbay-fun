@@ -9,6 +9,9 @@ export function Footer() {
         <div>
           <Link href="/manual">THE MANUAL ↗</Link>
           <Link href="/docs">DOCS ↗</Link>
+          <a href="https://bankr.bot/u/0xb316e8ea7bc9b24ea5fd4ebd07051678c27ffe79/apps/mintbay-monitor" target="_blank" rel="noopener noreferrer">
+            BANKR APP ↗
+          </a>
           <a href="https://github.com/FILTER8/mintbay-agent" target="_blank" rel="noopener noreferrer">
             OPEN SOURCE ↗
           </a>
