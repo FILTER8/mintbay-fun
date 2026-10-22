@@ -7,8 +7,10 @@ import { formatEther, parseAbi, parseEther } from 'viem';
 import { WalletConnect } from '@/components/wallet-connect';
 
 const chainId = 4663;
+const LEGACY_8X8 = '0x2ee6305804dd94f7ff695c5ab1f3ae805f317653';
 const abi = parseAbi([
   'function mint(uint256 quantity) payable',
+  'function freeMint(uint256 hoodieId)',
   'function holderClaim(address sourceContract, uint256 sourceTokenId) payable',
   'function burnAndClaim(address sourceCollection, uint256 sourceTokenId) payable',
   'function oneShotRemint(uint256 tokenId)',
@@ -99,7 +101,9 @@ function MintWidgetSession({address,fallbackPrice,maxSupply,wallet,isConnected,s
    }else if(tab==='holder'){
     if(!chosen||!hasPrice(chosen))throw Error('Choose an eligible NFT.');
     setBusy('Confirm claim in wallet');
-    hash=await writeContractAsync({address:contract,abi,functionName:'holderClaim',args:[chosen.source as `0x${string}`,BigInt(chosen.tokenId)],value:BigInt(chosen.priceWei),chainId});
+    hash=isLegacy8x8
+      ? await writeContractAsync({address:contract,abi,functionName:'freeMint',args:[BigInt(chosen.tokenId)],chainId})
+      : await writeContractAsync({address:contract,abi,functionName:'holderClaim',args:[chosen.source as `0x${string}`,BigInt(chosen.tokenId)],value:BigInt(chosen.priceWei),chainId});
    }else if(tab==='burn'){
     if(!chosen||!hasSource(chosen))throw Error('Choose an eligible NFT to burn.');
     const original=chosen.source as `0x${string}`;
@@ -171,7 +175,7 @@ function MintWidgetSession({address,fallbackPrice,maxSupply,wallet,isConnected,s
      </>}
     </>}
     {data?.eligibilityError&&<p role="status">SOME ELIGIBILITY CHECKS COULD NOT COMPLETE. TRY REFRESHING.</p>}
-    {activeChain!==chainId?<button className="btn btn-lime" onClick={()=>switchChain?.({chainId})}>SWITCH TO ROBINHOOD</button>:<button className="btn btn-lime" disabled={Boolean(busy)||!client||(tab==='public'&&(maxQty===0||status==='minted_out'||remain===0))||(tab!=='public'&&!chosen)} onClick={()=>void perform()}>{busy?`${busy.toUpperCase()}…`:tab==='public'?'MINT NOW ↗':tab==='holder'?'CLAIM NOW ↗':tab==='burn'?'BURN & CLAIM ↗':'ONE SHOT ↗'}</button>}
+    {activeChain!==chainId?<button className="btn btn-lime" onClick={()=>switchChain?.({chainId})}>SWITCH TO ROBINHOOD</button>:<button className="btn btn-lime" disabled={Boolean(busy)||!client||(tab==='public'&&(maxQty===0||status==='minted_out'||remain===0))||(tab!=='public'&&!chosen)} onClick={()=>void perform()}>{busy?`${busy.toUpperCase()}…`:tab==='public'?'MINT NOW ↗':tab==='holder'?(isLegacy8x8?'CLAIM FREE PORTRAIT ↗':'CLAIM NOW ↗'):tab==='burn'?'BURN & CLAIM ↗':'ONE SHOT ↗'}</button>}
    </>}
   </>}
   {success&&<p role="status">CONFIRMED! <a href={`https://robin.etherscan.io/tx/${success}`} target="_blank" rel="noreferrer">VIEW TRANSACTION ↗</a></p>}

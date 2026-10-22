@@ -7,6 +7,13 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const API = process.env.MINTBAY_API_URL || 'https://api.mintbay.fun';
 const ZERO = '0x0000000000000000000000000000000000000000' as const;
+// One legacy collection, no change to V5.1 collections.
+const LEGACY_8X8 = '0x2ee6305804dd94f7ff695c5ab1f3ae805f317653';
+const LEGACY_HOODIE = '0x9Ec6C5b9f572A9B02138E553BC5F5882Da735F45';
+const legacyAbi = parseAbi([
+  'function hoodieClaimed(uint256) view returns (bool)',
+  'function freeMint(uint256)',
+]);
 const abi = parseAbi([
   'function maxSupply() view returns (uint256)',
   'function totalSupply() view returns (uint256)',
@@ -80,7 +87,8 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{address:
  if(!isAddress(address))return NextResponse.json({error:'Invalid contract'},{status:400});
  const c=await collection(address).catch(()=>null);
  if(!c)return NextResponse.json({error:'Collection not registered'},{status:404});
- const contract=address as `0x${string}`;
+  const contract=address as `0x${string}`;
+  const isLegacy8x8=address.toLowerCase()===LEGACY_8X8;
  const wallet=request.nextUrl.searchParams.get('wallet')||'';
  if(wallet && !isAddress(wallet))return NextResponse.json({error:'Invalid wallet'},{status:400});
  const [max, circulating, price, transferCount, buildRes, publicCount, perWallet, holder, burn, oneShot, claimPerToken]=await Promise.all([
@@ -125,6 +133,41 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{address:
    }
   }catch(e){eligibilityError=e instanceof Error?e.message:'Eligibility temporarily unavailable';}
  }
- const remainingAllowance=perWallet===BigInt(0)?null:Math.max(0,Number(perWallet-publicCount));
+  // Legacy 8x8 free mint is freeMint(hoodieId), not V5 holderClaim(source,id).
+  // Never infer eligibility from the uploaded build: ownership and claimed flag are on-chain.
+  if(isLegacy8x8){
+    let legacyError:string|null=null;
+    const legacyClaims:typeof methods.holder=[];
+    if(wallet){
+      try{
+        if(!process.env.ALCHEMY_API_KEY)throw Error('ALCHEMY_API_KEY is required to find eligible Hoodies');
+        const nfts=await owned(LEGACY_HOODIE,wallet);
+        const seen=new Set<string>();
+        for(const nft of nfts){
+          if(seen.has(nft.tokenId))continue;
+          seen.add(nft.tokenId);
+          const id=BigInt(nft.tokenId);
+          // A failed read/simulation must not turn into a false "eligible" result.
+          const [actualOwner,wasClaimed]=await Promise.all([
+            client.readContract({address:LEGACY_HOODIE as `0x${string}`,abi,functionName:'ownerOf',args:[id]}),
+            client.readContract({address:contract,abi:legacyAbi,functionName:'hoodieClaimed',args:[id]}),
+          ]);
+          if(actualOwner.toLowerCase()!==wallet.toLowerCase()||wasClaimed)continue;
+          try{
+            await client.simulateContract({address:contract,abi:legacyAbi,functionName:'freeMint',args:[id],account:wallet as `0x${string}`});
+            legacyClaims.push({source:LEGACY_HOODIE,tokenId:nft.tokenId,priceWei:'0',remaining:1});
+          }catch{/* Supply may be exhausted or mint restricted: don't offer it. */}
+        }
+      }catch(e){legacyError=e instanceof Error?e.message:'Legacy Hoodie eligibility unavailable';}
+    }
+    methods.holder=legacyClaims;
+    methods.burn=[];
+    methods.oneShot=[];
+    // Legacy contract does not expose V5 claim/oneShot flags.
+    return NextResponse.json({maxSupply:Number(max),minted,priceWei:price.toString(),remainingAllowance:null,
+      features:{holder:true,burn:false,oneShot:false},methods,eligibilityError:legacyError},
+      {headers:{'Cache-Control':'no-store'}});
+  }
+  const remainingAllowance=perWallet===BigInt(0)?null:Math.max(0,Number(perWallet-publicCount));
  return NextResponse.json({maxSupply:Number(max),minted,priceWei:price.toString(),remainingAllowance,features:{holder,burn,oneShot},methods,eligibilityError},{headers:{'Cache-Control':'no-store'}});
 }
