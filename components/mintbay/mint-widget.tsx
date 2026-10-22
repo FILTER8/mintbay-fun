@@ -36,6 +36,7 @@ export function MintWidget(props:Props){
 }
 function MintWidgetSession({address,fallbackPrice,maxSupply,wallet,isConnected,status='unknown'}:Props&{wallet:`0x${string}`|undefined;isConnected:boolean}){
  const contract=address as `0x${string}`;
+ const isLegacy8x8 = address.toLowerCase() === LEGACY_8X8;
  const activeChain=useChainId();
  const {switchChain}=useSwitchChain();
  const client=usePublicClient({chainId});
