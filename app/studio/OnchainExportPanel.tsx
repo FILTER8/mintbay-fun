@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const SETTINGS_KEY = "mintbay-pixelstudio-onchain-v5";
+const SETTINGS_KEY = "mintbay-pixelstudio-onchain-v6";
 const DEFAULT_CREATOR_MESSAGE = [
   "+------------------------+",
   "|  MAKE ART HAVE FUN    |",
@@ -172,9 +172,9 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
       claimRequiresCurrentOwner: true,
       reservedSupplyForFreeClaims: 0,
     },
-    // V5: all mint routes consume the same lifetime maxSupply; burns do not replenish it.
-    mintbayV5: {
-      schemaVersion: 5,
+    // V6: all mint routes consume the same lifetime maxSupply; burns do not replenish it.
+    mintbayV6: {
+      schemaVersion: 6,
       platformFeeBps: 500,
       payoutRecipient,
       sharedLifetimeSupply: true,
@@ -200,14 +200,14 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
     deployment: {
       verifySource: true,
       requireApprovalBeforeTransactions: true,
-      framework: "Mintbay V5.1 / MintbayNetIntegratedERC721A (Bankr CREATE2)",
+      framework: "Mintbay V6 / external renderer and data shards (Bankr CREATE2)",
       sourceArt: "collection/artwork.json",
       skillUrl: MINTBAY_SKILL_URL,
       adminMode: settings.adminMode,
-      // V5.1 generator uses this as the final initialOwner, not necessarily the CREATE2 sender.
+      // V6 generator uses this as the final initialOwner, not necessarily the CREATE2 sender.
       expectedDeployer: addressOrNull(settings.deployerAddress),
       initialOwner: addressOrNull(settings.deployerAddress),
-      baseContract: "assets/contracts/v5/MintbayNetIntegratedERC721A.sol",
+      baseContract: "assets/contracts/v6/MintbayCoreERC721A.sol",
     },
     features: {
       standardRoyalties: hasRoyalties,
@@ -227,7 +227,7 @@ function buildBankrDeployPrompt(buildUrl: string, chainId: number) {
   const buildId = buildUrl.split("/").filter(Boolean).pop() || buildUrl;
   const chain = SUPPORTED_CHAINS.find((item) => item.id === chainId);
   if (!chain) throw new Error(`Unsupported deployment chain: ${chainId}`);
-  return `@bankrbot deploy my Mintbay NFT collection on ${chain.name} (chain ID ${chain.id}).\nBuild ID: ${buildId}\nUse the official Mintbay skill.\nShow the contract transaction and verify the contracts.`;
+  return `@bankrbot deploy my Mintbay NFT collection on ${chain.name} (chain ID ${chain.id}).\nBuild ID: ${buildId}\nUse the official Mintbay skill.\nPrepare and validate the complete V6 dependency manifest and run local EVM tests. Do not broadcast until verified and I explicitly approve every transaction.`;
 }
 
 export default function OnchainExportPanel({
@@ -329,7 +329,7 @@ export default function OnchainExportPanel({
     issues.push(...sourceHeaderIssues(settings.sourceHeaderArt));
     if (!ETH_PRICE_PATTERN.test(settings.mintPriceEth)) issues.push("Mint price must be a non-negative native-token amount (ETH or POL) with at most 18 decimals.");
     if (!SUPPORTED_CHAINS.some((chain) => chain.id === settings.chainId)) issues.push("Select a supported blockchain.");
-    if (settings.adminMode !== "standard") issues.push("Mintbay V5.1 currently supports standard owner addresses only; HoodWallet administration is not yet supported by the generator.");
+    if (settings.adminMode !== "standard") issues.push("Mintbay V6 currently supports standard owner addresses only; HoodWallet administration is not yet supported by the generator.");
     if (!Number.isInteger(settings.maxMintsPerWallet) || settings.maxMintsPerWallet < 0) issues.push("Public wallet limit must be 0 (unlimited) or higher.");
     if (settings.creatorMintEnabled && (!Number.isInteger(settings.creatorReserve) || settings.creatorReserve < 0 || settings.creatorReserve > project.supply)) issues.push("Creator allowance must be between 0 and total supply.");
     if (settings.royaltyMode !== "none" && (!Number.isInteger(settings.royaltyBps) || settings.royaltyBps < 0 || settings.royaltyBps > 10000)) issues.push("Royalties must be between 0 and 10,000 basis points.");
@@ -405,7 +405,7 @@ export default function OnchainExportPanel({
       if (typeof result.url !== "string") throw new Error("Build URL missing from API response");
       setPublishedUrl(result.url);
       setPublishPassword("");
-      setFeedback("Build published! Copy the Bankr production deployment prompt below. Bankr will request final approval before sending a transaction.");
+      setFeedback("Build published! Copy the Bankr production deployment prompt below. Bankr must complete V6 deployment preflight and request explicit approval before broadcasting.");
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not publish the build");
     } finally { setPublishing(false); }
@@ -415,7 +415,7 @@ export default function OnchainExportPanel({
     if (!publishedUrl) { setFeedback("Publish a build first to obtain its immutable URL."); return; }
     try {
       await navigator.clipboard.writeText(buildBankrDeployPrompt(publishedUrl, settings.chainId));
-      setFeedback("Copied production Bankr deployment prompt. Review Bankr’s deployment summary before approving.");
+      setFeedback("Copied V6 preflight prompt. Do not approve deployment until the local EVM checks pass.");
     } catch { setFeedback("Clipboard unavailable; deployment prompt could not be copied."); }
   }
 
@@ -483,7 +483,7 @@ export default function OnchainExportPanel({
           <label className="block">Net base contract
             <select value={settings.adminMode} className={fieldClass} onChange={(event) => update("adminMode", event.target.value as AdminMode)}>
               <option value="standard">Standard — final collection owner</option>
-              <option value="hoodwallet" disabled>HoodWallet — not supported in V5.1</option>
+              <option value="hoodwallet" disabled>HoodWallet — not supported in V6</option>
             </select>
           </label>
           {settings.adminMode === "hoodwallet" ? (
@@ -527,7 +527,7 @@ export default function OnchainExportPanel({
             </>
           )}
           {settings.royaltyMode === "enforced" && (
-            <p className="border-l-4 border-current pl-3 opacity-80">Requires the pinned V5 Limit Break transfer-validation implementation and a separate OpenSea activation step after deployment. Net Bazaar and other transfer routes may be incompatible until validation is disabled or configured. No validator is activated by publishing this draft.</p>
+            <p className="border-l-4 border-current pl-3 opacity-80">Requires the pinned V6 Limit Break transfer-validation implementation and a separate OpenSea activation step after deployment. Net Bazaar and other transfer routes may be incompatible until validation is disabled or configured. No validator is activated by publishing this draft.</p>
           )}
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.transferableOwnership} onChange={(event) => update("transferableOwnership", event.target.checked)} /> Transfer Ownership (optional)</label>
           <p className="opacity-70">Direct ownership transfer. Payout and royalty addresses stay unchanged; the new owner can update them.</p>
@@ -566,7 +566,7 @@ export default function OnchainExportPanel({
           {settings.burnClaimEnabled && <div className="space-y-2 pl-4"><label className="block">Eligible burn-source ERC-721 contract<input className={fieldClass} value={settings.burnClaimCollection} onChange={(e) => update("burnClaimCollection", e.target.value)} placeholder="0x..." spellCheck={false}/></label><p className="text-sm opacity-70">Burn one approved source NFT to mint one new NFT for free. The collector must approve the new contract to burn their source token first. A source NFT is permanently destroyed; the entire action reverts if minting fails.</p></div>}
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.oneShotEnabled} onChange={(e) => update("oneShotEnabled", e.target.checked)}/> One Shot (Burn & Remint)</label>
           {settings.oneShotEnabled && <p className="pl-4 opacity-70">One free replacement per token lineage; requires unused lifetime supply. The replacement cannot be reminted again.</p>}
-          <p className="opacity-70">All mint routes share one first-come-first-served lifetime supply. Mintbay V5.1 tries up to ten seeds to avoid repeating a trait combination; duplicates are permitted if all attempts collide. Standard authorized NFT burn remains available.</p>
+          <p className="opacity-70">All mint routes share one first-come-first-served lifetime supply. Mintbay V6 tries up to ten seeds to avoid repeating a trait combination; duplicates are permitted if all attempts collide. Standard authorized NFT burn remains available.</p>
         </div>}
 
         {step === 4 && <div className={`${panelClass} space-y-3`}>
