@@ -99,9 +99,14 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{address:
   safeRead(contract,'holderClaimEnabled',[],false),safeRead(contract,'burnClaimEnabled',[],false),safeRead(contract,'oneShotEnabled',[],false),safeRead(contract,'claimsPerToken',[],BigInt(0))
  ]);
  const minted=transferCount!==null && transferCount>=Number(circulating) ? transferCount : null;
- const v5=obj(get(buildRes,'mintbayV5'));
- const holderSources=holder?asSources(get(get(v5,'holderClaim'),'sourceCollections')):[];
- const burnSources=burn?asSources(get(get(v5,'burnAndClaim'),'sourceCollections')):[];
+ // Read the schema of the immutable Studio build. V6 and V5.1 use the same
+ // Holder Claim contract ABI, but store feature configuration under different keys.
+ const buildConfig=obj(buildRes);
+ const v6=obj(get(buildConfig,'mintbayV6'));
+ const v5=obj(get(buildConfig,'mintbayV5'));
+ const features=Number(get(v6,'schemaVersion'))===6 ? v6 : v5;
+ const holderSources=holder?asSources(get(get(features,'holderClaim'),'sourceCollections')):[];
+ const burnSources=burn?asSources(get(get(features,'burnAndClaim'),'sourceCollections')):[];
  const methods:{holder:Array<{source:string;tokenId:string;priceWei:string;remaining:number}>; burn:Array<{source:string;tokenId:string}>;oneShot:Array<{tokenId:string}>}={holder:[],burn:[],oneShot:[]};
  let eligibilityError:string|null=null;
  if(wallet){
