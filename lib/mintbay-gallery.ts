@@ -10,7 +10,7 @@ export const net = (a:string) => `https://www.netprotocol.app/app/bazaar/robinho
 export const collectionHref=(a:string)=>`/collections/4663/${a.toLowerCase()}`;
 export const tokenHref=(a:string,id:string)=>`${collectionHref(a)}/${id}`;
 export type Collection = {chainId:number;contractAddress:string;name:string;symbol:string;maxSupply:number;mintPriceEth:string;previewImage:string|null;firstMintTokenId?:string|null; deployedAt:string};
-export type NFT = {contract:string;tokenId:string;name:string;image:string|null;attributes:{trait_type:string;value:string}[];owner:string|null; acquiredAt?:string};
+export type NFT = {contract:string;tokenId:string;name:string;image:string|null;animationUrl?:string|null;attributes:{trait_type:string;value:string}[];owner:string|null; acquiredAt?:string};
 export async function collections():Promise<Collection[]> {
  const r=await fetch(`${API}/v1/collections`,{next:{revalidate:90}});
  if(!r.ok)throw Error('Mintbay collections API unavailable');
@@ -50,6 +50,7 @@ function nftOf(o: unknown, contract?: string): NFT {
   contract:addr.toLowerCase(), tokenId:id,
   name:asText(at(o,'name')) || asText(at(o,'raw','metadata','name')) || asText(at(o,'metadata','name')) || `#${id}`,
   image:imageOf(o),
+   animationUrl:asText(at(o,'raw','metadata','animation_url')) || asText(at(o,'metadata','animation_url')) || asText(at(o,'animationUrl')) || null,
   attributes:attributesOf(at(o,'raw','metadata','attributes') ?? at(o,'metadata','attributes')),
   owner:asText(owners[0]) ?? null,
   acquiredAt:asText(at(o,'acquiredAt','blockTimestamp')) || asText(at(o,'mint','timestamp')) || asText(at(o,'timeLastUpdated')),
@@ -92,12 +93,13 @@ export async function token(address:string,id:string):Promise<NFT|null>{
  try{item=nftOf(await alchemy('getNFTMetadata',{contractAddress:address,tokenId:id,tokenType:'ERC721'}),address)}catch{}
  try{
   const owner=String(await rpcCall(address,'ownerOf',[BigInt(id)]));
-  if(!item)item={contract:address.toLowerCase(),tokenId:id,name:`#${id}`,image:null,attributes:[],owner};
+  if(!item)item={contract:address.toLowerCase(),tokenId:id,name:`#${id}`,image:null,animationUrl:null,attributes:[],owner};
   item.owner=owner;
   try{
    const raw=decodeTokenUri(String(await rpcCall(address,'tokenURI',[BigInt(id)])));
    if(typeof raw?.image==='string' && (/^data:image\//.test(raw.image)||/^https:\/\//.test(raw.image)))item.image=raw.image;
    if(typeof raw?.name==='string')item.name=raw.name;
+    if(typeof raw?.animation_url==='string')item.animationUrl=raw.animation_url;
    if(Array.isArray(raw?.attributes))item.attributes=attributesOf(raw.attributes);
   }catch{/* retain Alchemy metadata if tokenURI fetch temporarily fails */}
   return item;
@@ -130,6 +132,7 @@ export async function collectionTokens(address:string,startToken='0',limit=24,fr
      const raw=await cachedTokenMetadata(address,n.tokenId);
      if(typeof raw?.image==='string' && (/^data:image\//.test(raw.image)||/^https:\/\//.test(raw.image)))n.image=raw.image;
      if(typeof raw?.name==='string')n.name=raw.name;
+      if(typeof raw?.animation_url==='string')n.animationUrl=raw.animation_url;
      if(Array.isArray(raw?.attributes))n.attributes=attributesOf(raw.attributes);
     }catch{/* keep raw Alchemy metadata as fallback */}
     return n;
