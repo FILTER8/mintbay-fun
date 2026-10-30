@@ -34,8 +34,8 @@ export function TokenMedia({
   // ArcadeMachine-only wallet bridge: other NFTs keep their original sandbox behavior.
   const ARCADE_COLLECTION = '0x0e2f6f18e7dcd0f608e4f338c8c36f04f4db1ea3';
   const OCH = '0x8bdd5adff8a9d08372323d5baf5e8e52605af983';
-  const VAULT = '0xd878f3c6d8b71264b546f81544695ab11791fca2';
-  const ENGINE = '0x0aecaf688473846cdd6a0bb6338cbfa3ab29c72b';
+  const VAULT = '0x4ba05708e716d77e4de93b76d7ff7cc31a0ad991';
+  const ENGINE = '0xb9a6246ca46532b31509847a3d466cd0a4173dec';
   const CHAIN = '0x1237';
   const isArcade = collectionAddress?.toLowerCase() === ARCADE_COLLECTION &&
     typeof tokenId === 'string' && /^\d+$/.test(tokenId);
@@ -48,14 +48,21 @@ export function TokenMedia({
   const [arcadeDocument, setArcadeDocument] = useState<string | null>(null);
   useEffect(() => {
     let nextDocument: string | null = null;
+    let cancelled = false;
+    const publish = (doc: string | null) => {
+      // Schedule React state updates outside the synchronous effect body.
+      void Promise.resolve().then(() => {
+        if (!cancelled) setArcadeDocument(doc);
+      });
+    };
     bridgeToken.current = '';
     if (!isArcade || !animationUrl?.startsWith('data:text/html')) {
-      setArcadeDocument(null);
-      return;
+      publish(null);
+      return () => { cancelled = true; bridgeToken.current = ''; };
     }
     const match = /^data:text\/html(?:;charset=[^;,]+)?;base64,/i.exec(animationUrl);
     const base64 = match ? animationUrl.slice(match[0].length) : null;
-    if (!base64) { setArcadeDocument(null); return; }
+    if (!base64) { publish(null); return () => { cancelled = true; bridgeToken.current = ''; }; }
     try {
       const binary = atob(base64.replace(/\s/g, ''));
       const html = new TextDecoder().decode(Uint8Array.from(binary, c => c.charCodeAt(0)));
@@ -100,8 +107,8 @@ export function TokenMedia({
     } catch (err) {
       console.error('ArcadeMachine HTML decoding failed:', err);
     }
-    setArcadeDocument(nextDocument);
-    return () => { bridgeToken.current = ''; };
+    publish(nextDocument);
+    return () => { cancelled = true; bridgeToken.current = ''; };
   }, [animationUrl, isArcade]);
 
   useEffect(() => {
