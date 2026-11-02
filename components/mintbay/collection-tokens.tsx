@@ -26,14 +26,14 @@ function mergeTokens(existing: NFT[], incoming: NFT[]): NFT[] {
   });
 }
 
-export function CollectionTokens({ address, initial, next }: {
-  address: string; initial: NFT[]; next: string | null;
+export function CollectionTokens({ address, chainId, initial, next }: {
+  address: string; chainId:number; initial: NFT[]; next: string | null;
 }) {
-  return <LiveTokens key={address.toLowerCase()} address={address} initial={initial} next={next} />;
+  return <LiveTokens key={`${chainId}:${address.toLowerCase()}`} chainId={chainId} address={address} initial={initial} next={next} />;
 }
 
-function LiveTokens({ address, initial, next }: {
-  address: string; initial: NFT[]; next: string | null;
+function LiveTokens({ address, chainId, initial, next }: {
+  address: string; chainId:number; initial: NFT[]; next: string | null;
 }) {
   const [tokens, setTokens] = useState<NFT[]>(initial);
   const [cursor, setCursor] = useState<string | null>(next);
@@ -47,7 +47,7 @@ function LiveTokens({ address, initial, next }: {
     if (document.visibilityState !== 'visible' || inFlight.current) return;
     inFlight.current = true;
     try {
-      const res = await fetch(`/api/mintbay/collection/${encodeURIComponent(address)}/tokens?start=0&fresh=1`, { cache: 'no-store' });
+      const res = await fetch(`/api/mintbay/collection/${encodeURIComponent(address)}/tokens?chainId=${chainId}&start=0&fresh=1`, { cache: 'no-store' });
       if (!res.ok) throw new Error('Live feed temporarily unavailable');
       const data = await res.json() as TokenPage;
       if (!Array.isArray(data.tokens)) throw new Error('Unexpected token feed response');
@@ -62,7 +62,7 @@ function LiveTokens({ address, initial, next }: {
     } finally {
       inFlight.current = false;
     }
-  }, [address]);
+  }, [address,chainId]);
 
   useEffect(() => {
     const id = window.setInterval(() => { void refresh(); }, POLL_MS);
@@ -81,7 +81,7 @@ function LiveTokens({ address, initial, next }: {
     if (!cursor || busy) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/mintbay/collection/${encodeURIComponent(address)}/tokens?start=${encodeURIComponent(cursor)}`, { cache: 'no-store' });
+      const res = await fetch(`/api/mintbay/collection/${encodeURIComponent(address)}/tokens?chainId=${chainId}&start=${encodeURIComponent(cursor)}`, { cache: 'no-store' });
       if (!res.ok) throw new Error('Unable to load more NFTs');
       const data = await res.json() as TokenPage;
       if (!Array.isArray(data.tokens)) throw new Error('Unexpected token feed response');
@@ -104,7 +104,7 @@ function LiveTokens({ address, initial, next }: {
       </span>
     </div>
     <div className="mb-gallery-grid">
-      {tokens.map(t => <Link className="mb-art-card" key={`${t.contract}:${t.tokenId}`} href={tokenHref(address, t.tokenId)}>
+      {tokens.map(t => <Link className="mb-art-card" key={`${t.contract}:${t.tokenId}`} href={tokenHref(address, t.tokenId,chainId)}>
         <div className="mb-square">
           {t.image ? <Image src={t.image} alt={t.name} width={512} height={512} unoptimized style={{ width: '100%', height: '100%', objectFit: 'fill', imageRendering: 'pixelated' }} /> : <span>#{t.tokenId}</span>}
         </div>

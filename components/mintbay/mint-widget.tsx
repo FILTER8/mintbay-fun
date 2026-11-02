@@ -6,7 +6,7 @@ import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContra
 import { formatEther, parseAbi, parseEther } from 'viem';
 import { WalletConnect } from '@/components/wallet-connect';
 
-const chainId = 4663;
+import { chainNames, supportedChains } from '@/lib/chains';
 const LEGACY_8X8 = '0x2ee6305804dd94f7ff695c5ab1f3ae805f317653';
 const abi = parseAbi([
   'function mint(uint256 quantity) payable',
@@ -27,16 +27,16 @@ const hasPrice = (o: Option): o is Claim => 'priceWei' in o;
 const optionKey = (o: Option, address: string) => `${hasSource(o) ? o.source.toLowerCase() : address.toLowerCase()}:${o.tokenId}`;
 type Preview = {image:string|null;name:string};
 type Eligibility={maxSupply:number;minted:number|null;priceWei:string;remainingAllowance:number|null;features:{holder:boolean;burn:boolean;oneShot:boolean};methods:{holder:Claim[];burn:Burn[];oneShot:OneShot[]};eligibilityError:string|null};
-type Props={address:string;fallbackPrice:string;maxSupply:number;status?:'open'|'minted_out'|'unknown'};
+type Props={chainId:number;address:string;fallbackPrice:string;maxSupply:number;status?:'open'|'minted_out'|'unknown'};
 const short=(a:string)=>`${a.slice(0,6)}…${a.slice(-4)}`;
 
 export function MintWidget(props:Props){
  const {address:wallet,isConnected}=useAccount();
- return <MintWidgetSession key={`${props.address.toLowerCase()}:${wallet?.toLowerCase()||'disconnected'}`} {...props} wallet={wallet} isConnected={isConnected}/>;
+ return <MintWidgetSession key={`${props.chainId}:${props.address.toLowerCase()}:${wallet?.toLowerCase()||'disconnected'}`} {...props} wallet={wallet} isConnected={isConnected}/>;
 }
-function MintWidgetSession({address,fallbackPrice,maxSupply,wallet,isConnected,status='unknown'}:Props&{wallet:`0x${string}`|undefined;isConnected:boolean}){
+function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isConnected,status='unknown'}:Props&{wallet:`0x${string}`|undefined;isConnected:boolean}){
  const contract=address as `0x${string}`;
- const isLegacy8x8 = address.toLowerCase() === LEGACY_8X8;
+ const isLegacy8x8 = chainId===4663 && address.toLowerCase() === LEGACY_8X8;
  const activeChain=useChainId();
  const {switchChain}=useSwitchChain();
  const client=usePublicClient({chainId});
@@ -53,7 +53,7 @@ function MintWidgetSession({address,fallbackPrice,maxSupply,wallet,isConnected,s
  const [refresh,setRefresh]=useState(0);
  useEffect(()=>{
   const abort=new AbortController();
-  fetch(`/api/mintbay/mint-options/${address}?${new URLSearchParams(wallet?{wallet}:{})}`,{signal:abort.signal,cache:'no-store'})
+  fetch(`/api/mintbay/mint-options/${address}?${new URLSearchParams({...wallet?{wallet}:{},chainId:String(chainId)})}`,{signal:abort.signal,cache:'no-store'})
    .then(async r=>{const json:unknown=await r.json();if(!r.ok)throw Error('Unable to check mint options');return json as Eligibility;})
    .then(value=>{if(!abort.signal.aborted){setData(value);setLoading(false);}})
    .catch(()=>{if(!abort.signal.aborted){setError('Mint options temporarily unavailable.');setLoading(false);}});
@@ -77,7 +77,7 @@ function MintWidgetSession({address,fallbackPrice,maxSupply,wallet,isConnected,s
    const key=optionKey(option,address);
    const source=hasSource(option)?option.source:address;
    try{
-    const q=new URLSearchParams({source,tokenId:option.tokenId});
+    const q=new URLSearchParams({source,tokenId:option.tokenId,chainId:String(chainId)});
     const response=await fetch(`/api/mintbay/mint-preview?${q}`,{signal:controller.signal});
     if(!response.ok)return [key,{image:null,name:`#${option.tokenId}`}] as const;
     const result:unknown=await response.json();
@@ -138,16 +138,16 @@ function MintWidgetSession({address,fallbackPrice,maxSupply,wallet,isConnected,s
    <div style={{display:'flex',justifyContent:'space-between',gap:8,alignItems:'center'}}><strong>{minted!==null&&minted!==undefined?`${minted.toLocaleString()} / ${cap.toLocaleString()} MINTED`:`${cap.toLocaleString()} MAX SUPPLY`}</strong><span>{pct!==null?`${pct.toFixed(1)}%`:'—'}</span></div>
    <div role="progressbar" aria-label="NFT mint progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct??undefined} style={{height:12,border:'2px solid #151515',background:'#e7e7e3',marginTop:9,overflow:'hidden'}}>{pct!==null&&<div style={{height:'100%',width:`${pct}%`,background:'#caff45'}}/>}</div>
   </div>
-  {!isConnected?<><div className="mb-price">{formatEther(price)} ETH <small>PER NFT</small></div><WalletConnect/></>:<>
+  {!isConnected?<><div className="mb-price">{formatEther(price)} {chainId===137?'POL':'ETH'} <small>PER NFT</small></div><WalletConnect/></>:<>
    {loading?<p>CHECKING YOUR MINT OPTIONS…</p>:<>
     <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:18}}>
      {(['public','holder','burn','oneShot'] as const).filter(k=>k==='public'||Boolean(data?.features[k])).map(k=><button key={k} type="button" onClick={()=>{setTab(k);setSelected('');setError('');}} style={{padding:'8px 11px',border:'2px solid #151515',font:'inherit',fontWeight:800,cursor:'pointer',background:tab===k?'#caff45':'transparent'}}>{labels[k]}{k!=='public'&&data?` (${data.methods[k].length})`:''}</button>)}
     </div>
     {tab==='public'?<>
-     <div className="mb-price">{formatEther(price)} ETH <small>PER NFT</small></div>
+     <div className="mb-price">{formatEther(price)} {chainId===137?'POL':'ETH'} <small>PER NFT</small></div>
      {allowance!==null&&<p>YOU CAN MINT {Math.min(allowance,remain??allowance)} MORE</p>}
      <label>QUANTITY <input type="number" min={1} max={Math.max(1,maxQty)} value={quantity} disabled={maxQty===0} onChange={e=>setQty(Math.max(1,Math.min(20,Number(e.target.value)||1)))}/></label>
-     <strong>TOTAL: {formatEther(price*BigInt(quantity))} ETH + GAS</strong>
+     <strong>TOTAL: {formatEther(price*BigInt(quantity))} {chainId===137?'POL':'ETH'} + GAS</strong>
     </>:<>
      {options.length===0?<p>{data?.eligibilityError?'UNABLE TO VERIFY ELIGIBILITY RIGHT NOW.':'NO ELIGIBLE NFTs FOUND IN THIS WALLET.'}</p>:<>
       <div style={{marginBottom:14}}>
@@ -176,10 +176,10 @@ function MintWidgetSession({address,fallbackPrice,maxSupply,wallet,isConnected,s
      </>}
     </>}
     {data?.eligibilityError&&<p role="status">SOME ELIGIBILITY CHECKS COULD NOT COMPLETE. TRY REFRESHING.</p>}
-    {activeChain!==chainId?<button className="btn btn-lime" onClick={()=>switchChain?.({chainId})}>SWITCH TO ROBINHOOD</button>:<button className="btn btn-lime" disabled={Boolean(busy)||!client||(tab==='public'&&(maxQty===0||status==='minted_out'||remain===0))||(tab!=='public'&&!chosen)} onClick={()=>void perform()}>{busy?`${busy.toUpperCase()}…`:tab==='public'?'MINT NOW ↗':tab==='holder'?(isLegacy8x8?'CLAIM FREE PORTRAIT ↗':'CLAIM NOW ↗'):tab==='burn'?'BURN & CLAIM ↗':'ONE SHOT ↗'}</button>}
+    {activeChain!==chainId?<button className="btn btn-lime" onClick={()=>switchChain?.({chainId})}>SWITCH TO {chainNames[chainId] || chainId}</button>:<button className="btn btn-lime" disabled={Boolean(busy)||!client||(tab==='public'&&(maxQty===0||status==='minted_out'||remain===0))||(tab!=='public'&&!chosen)} onClick={()=>void perform()}>{busy?`${busy.toUpperCase()}…`:tab==='public'?'MINT NOW ↗':tab==='holder'?(isLegacy8x8?'CLAIM FREE PORTRAIT ↗':'CLAIM NOW ↗'):tab==='burn'?'BURN & CLAIM ↗':'ONE SHOT ↗'}</button>}
    </>}
   </>}
-  {success&&<p role="status">CONFIRMED! <a href={`https://robin.etherscan.io/tx/${success}`} target="_blank" rel="noreferrer">VIEW TRANSACTION ↗</a></p>}
+  {success&&<p role="status">CONFIRMED! <a href={`${supportedChains.find(c=>c.id===chainId)?.blockExplorers?.default.url || 'https://robin.etherscan.io'}/tx/${success}`} target="_blank" rel="noreferrer">VIEW TRANSACTION ↗</a></p>}
   {error&&<p role="alert" style={{overflowWrap:'anywhere'}}>{error.slice(0,300)}</p>}
   {isConnected&&<button type="button" onClick={()=>{setRefresh(n=>n+1);setError('');}} style={{display:'block',background:'none',border:0,padding:'12px 0 0',font:'inherit',cursor:'pointer',textDecoration:'underline'}}>REFRESH ELIGIBILITY ↗</button>}
  </div>;

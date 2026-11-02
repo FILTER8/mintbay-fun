@@ -8,7 +8,8 @@ export async function GET(
   { params }: { params: Promise<{ address: string }> }
 ) {
   const { address } = await params;
-  if (!ADDRESS.test(address) || !(await collection(address))) {
+  const chainId=Number(req.nextUrl.searchParams.get('chainId')||4663);
+  if (!ADDRESS.test(address) || !(await collection(address,chainId))) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
   const start = req.nextUrl.searchParams.get('start') || '0';
@@ -17,7 +18,7 @@ export async function GET(
   }
   const fresh = req.nextUrl.searchParams.get('fresh') === '1';
   try {
-    const result = await collectionTokens(address, start, 24, fresh);
+    const result = await collectionTokens(address, start, 24, fresh,chainId);
     return NextResponse.json(result, { headers: { 'Cache-Control': 'no-store' } });
   } catch {
     return NextResponse.json({ error: 'NFT service unavailable' }, { status: 503, headers: { 'Cache-Control': 'no-store' } });

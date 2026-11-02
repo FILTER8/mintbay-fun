@@ -1,24 +1,27 @@
+import { publicRpc, alchemyNetwork, supportedChains } from './chains';
 import { decodeFunctionResult, encodeFunctionData, parseAbi, keccak256, toBytes } from 'viem';
 import { unstable_cache } from 'next/cache';
 export const CHAIN = 4663;
 export const ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 export const TOKEN = /^\d{1,40}$/;
 export const API = process.env.MINTBAY_API_URL || 'https://api.mintbay.fun';
-export const explorer = (a:string) => `https://robin.etherscan.io/address/${a}`;
-export const opensea = (a:string,id?:string) => `https://opensea.io/assets/robinhood/${a}${id==null?'':'/'+id}`;
+export const explorer = (a:string, chain=4663) => `${explorerBase[chain] || explorerBase[4663]}/address/${a}`;
+const explorerBase:Record<number,string>={4663:'https://robin.etherscan.io',8453:'https://basescan.org',1:'https://etherscan.io',137:'https://polygonscan.com',130:'https://uniscan.xyz',42161:'https://arbiscan.io'};
+const openSeaSlug:Record<number,string>={4663:'robinhood',8453:'base',1:'ethereum',137:'matic',130:'unichain',42161:'arbitrum'};
+export const opensea = (a:string,id?:string,chain=4663) => `https://opensea.io/assets/${openSeaSlug[chain] || 'robinhood'}/${a}${id==null?'':'/'+id}`;
 export const net = (a:string) => `https://www.netprotocol.app/app/bazaar/robinhood/${a}`;
-export const collectionHref=(a:string)=>`/collections/4663/${a.toLowerCase()}`;
-export const tokenHref=(a:string,id:string)=>`${collectionHref(a)}/${id}`;
-export type Collection = {chainId:number;contractAddress:string;name:string;symbol:string;maxSupply:number;mintPriceEth:string;previewImage:string|null;firstMintTokenId?:string|null; deployedAt:string};
-export type NFT = {contract:string;tokenId:string;name:string;image:string|null;animationUrl?:string|null;attributes:{trait_type:string;value:string}[];owner:string|null; acquiredAt?:string};
+export const collectionHref=(a:string,chain=4663)=>`/collections/${chain}/${a.toLowerCase()}`;
+export const tokenHref=(a:string,id:string,chain=4663)=>`${collectionHref(a,chain)}/${id}`;
+export type Collection = {chainId:number;contractAddress:string;name:string;symbol:string;maxSupply:number;mintPriceEth:string;previewImage:string|null;firstMintTokenId?:string|null; buildId?:string; deployedAt:string};
+export type NFT = {contract:string;tokenId:string;name:string;image:string|null;animationUrl?:string|null;attributes:{trait_type:string;value:string}[];owner:string|null; acquiredAt?:string;chainId?:number};
 export async function collections():Promise<Collection[]> {
  const r=await fetch(`${API}/v1/collections`,{next:{revalidate:90}});
  if(!r.ok)throw Error('Mintbay collections API unavailable');
- const v=await r.json(); return Array.isArray(v.collections)?v.collections.filter((c:Collection)=>c.chainId===4663):[];
+ const v=await r.json(); return Array.isArray(v.collections)?v.collections.filter((c:Collection)=>supportedChains.some(chain=>chain.id===c.chainId)):[];
 }
-export async function collection(address:string):Promise<Collection|null>{return (await collections()).find(c=>c.contractAddress.toLowerCase()===address.toLowerCase())||null;}
-const hosts:Record<number,string>={4663:'robinhood-mainnet',8453:'base-mainnet',1:'eth-mainnet'};
-function alchemyUrl(chain=4663){const k=process.env.ALCHEMY_API_KEY;if(!k)return null;return `https://${hosts[chain]}.g.alchemy.com/nft/v3/${k}`;}
+export async function collection(address:string,chain=4663):Promise<Collection|null>{return (await collections()).find(c=>c.chainId===chain&&c.contractAddress.toLowerCase()===address.toLowerCase())||null;}
+const hosts=alchemyNetwork;
+function alchemyUrl(chain=4663){const k=process.env.ALCHEMY_API_KEY;if(!k||!hosts[chain])return null;return `https://${hosts[chain]}.g.alchemy.com/nft/v3/${k}`;}
 async function alchemy(method:string,params:Record<string,string>,chain=4663,fresh=false){const base=alchemyUrl(chain);if(!base)throw Error('ALCHEMY_API_KEY must be configured on server');const q=new URLSearchParams();for(const [k,v] of Object.entries(params))q.append(k.startsWith('contractAddresses[')?'contractAddresses[]':k,v);const r=await fetch(`${base}/${method}?${q}`,fresh?{cache:'no-store'}:{next:{revalidate:90}});if(!r.ok)throw Error(`Alchemy NFT API: ${r.status} (${method})`);return r.json();}
 type JsonMap = Record<string, unknown>;
 const asObj = (v: unknown): JsonMap => (typeof v === 'object' && v !== null && !Array.isArray(v) ? v as JsonMap : {});
@@ -57,9 +60,9 @@ function nftOf(o: unknown, contract?: string): NFT {
  };
 }
 const abi=parseAbi(['function ownerOf(uint256) view returns (address)','function tokenURI(uint256) view returns (string)','function price() view returns(uint256)','function maxSupply() view returns(uint256)','function totalSupply() view returns(uint256)']);
-export async function rpcCall(address: string, functionName: 'ownerOf' | 'tokenURI' | 'price' | 'maxSupply' | 'totalSupply', args: bigint[] = []): Promise<string | bigint> {
+export async function rpcCall(address: string, functionName: 'ownerOf' | 'tokenURI' | 'price' | 'maxSupply' | 'totalSupply', args: bigint[] = [], chain=4663): Promise<string | bigint> {
  const key = process.env.ALCHEMY_API_KEY;
- const url = key ? `https://robinhood-mainnet.g.alchemy.com/v2/${key}` : process.env.ROBINHOOD_RPC_URL;
+ const url = key && hosts[chain] ? `https://${hosts[chain]}.g.alchemy.com/v2/${key}` : publicRpc[chain];
  if (!url) throw Error('Configure ALCHEMY_API_KEY or ROBINHOOD_RPC_URL');
  const arg = args[0] ?? BigInt(0);
  const data = functionName === 'ownerOf' ? encodeFunctionData({abi,functionName:'ownerOf',args:[arg]})
@@ -87,16 +90,16 @@ function decodeTokenUri(uri: string): JsonMap | null {
 }
 // For a token page, the contract's tokenURI is the canonical artwork source.
 // Alchemy is still used for fast NFT discovery and metadata fallback.
-export async function token(address:string,id:string):Promise<NFT|null>{
+export async function token(address:string,id:string,chain=4663):Promise<NFT|null>{
  if(!ADDRESS.test(address)||!TOKEN.test(id))return null;
  let item:NFT|null=null;
- try{item=nftOf(await alchemy('getNFTMetadata',{contractAddress:address,tokenId:id,tokenType:'ERC721'}),address)}catch{}
+ try{item=nftOf(await alchemy('getNFTMetadata',{contractAddress:address,tokenId:id,tokenType:'ERC721'},chain),address)}catch{}
  try{
-  const owner=String(await rpcCall(address,'ownerOf',[BigInt(id)]));
+  const owner=String(await rpcCall(address,'ownerOf',[BigInt(id)],chain));
   if(!item)item={contract:address.toLowerCase(),tokenId:id,name:`#${id}`,image:null,animationUrl:null,attributes:[],owner};
   item.owner=owner;
   try{
-   const raw=decodeTokenUri(String(await rpcCall(address,'tokenURI',[BigInt(id)])));
+   const raw=decodeTokenUri(String(await rpcCall(address,'tokenURI',[BigInt(id)],chain)));
    if(typeof raw?.image==='string' && (/^data:image\//.test(raw.image)||/^https:\/\//.test(raw.image)))item.image=raw.image;
    if(typeof raw?.name==='string')item.name=raw.name;
     if(typeof raw?.animation_url==='string')item.animationUrl=raw.animation_url;
@@ -107,16 +110,16 @@ export async function token(address:string,id:string):Promise<NFT|null>{
 }
 // Cache image metadata only; ownership is always verified separately on chain.
 const cachedTokenMetadata = unstable_cache(
- async (address: string, tokenId: string) => {
-  const uri = String(await rpcCall(address, 'tokenURI', [BigInt(tokenId)]));
+ async (address: string, tokenId: string, chain: number) => {
+  const uri = String(await rpcCall(address, 'tokenURI', [BigInt(tokenId)],chain));
   return decodeTokenUri(uri);
  },
  ['mintbay-token-artwork-v1'],
  { revalidate: 300 }
 );
 
-export async function collectionTokens(address:string,startToken='0',limit=24,fresh=false):Promise<{tokens:NFT[];next:string|null}>{
- const data=await alchemy('getNFTsForCollection',{contractAddress:address,withMetadata:'true',startToken,limit:String(limit)},4663,fresh);
+export async function collectionTokens(address:string,startToken='0',limit=24,fresh=false,chain=4663):Promise<{tokens:NFT[];next:string|null}>{
+ const data=await alchemy('getNFTsForCollection',{contractAddress:address,withMetadata:'true',startToken,limit:String(limit)},chain,fresh);
  const items=asArray(at(data,'nfts'));
  // A token might still be present in Alchemy metadata after a burn. Verify ownerOf.
  // This page is limited to 24 items, and checks run concurrently with a cap.
@@ -125,11 +128,11 @@ export async function collectionTokens(address:string,startToken='0',limit=24,fr
   const batch=await Promise.all(items.slice(i,i+6).map(async(o:unknown)=>{
    const n=nftOf(o,address);
    try{
-    n.owner=String(await rpcCall(address,'ownerOf',[BigInt(n.tokenId)]));
+    n.owner=String(await rpcCall(address,'ownerOf',[BigInt(n.tokenId)],chain));
     // Always prefer the immutable on-chain SVG rather than an Alchemy thumbnail.
     // Two bounded RPC reads per visible token, not a continuous indexer scan.
     try{
-     const raw=await cachedTokenMetadata(address,n.tokenId);
+     const raw=await cachedTokenMetadata(address,n.tokenId,chain);
      if(typeof raw?.image==='string' && (/^data:image\//.test(raw.image)||/^https:\/\//.test(raw.image)))n.image=raw.image;
      if(typeof raw?.name==='string')n.name=raw.name;
       if(typeof raw?.animation_url==='string')n.animationUrl=raw.animation_url;
@@ -144,21 +147,24 @@ export async function collectionTokens(address:string,startToken='0',limit=24,fr
 }
 // Explicitly read every page before claiming a latest-16 export. Errors propagate, never silently truncate.
 export async function ownerTokens(owner:string):Promise<NFT[]>{
- const registered=await collections();const contracts=registered.map(c=>c.contractAddress);
+ const registered=await collections();const contracts=registered.map(c=>({address:c.contractAddress,chain:c.chainId}));
  if(!contracts.length)return [];
  const all:NFT[]=[];
- for(let batch=0;batch<contracts.length;batch+=45){
-  const b=contracts.slice(batch,batch+45);let pageKey:string|undefined;let pages=0;
-  do{
-   if(++pages>100)throw Error('Gallery too large to fully load; try again later');
-   const params:Record<string,string>={owner,withMetadata:'true',pageSize:'100',orderBy:'transferTime'};
-   b.forEach((a,i)=>params[`contractAddresses[${i}]`]=a);
-   if(pageKey)params.pageKey=pageKey;
-   const d=await alchemy('getNFTsForOwner',params,4663,true);
-   if (!Array.isArray(at(d,'ownedNfts'))) throw Error('Unexpected NFT ownership response');
-   all.push(...asArray(at(d,'ownedNfts')).map((v:unknown)=>nftOf(v)));
-   pageKey=asText(at(d,'pageKey')) || undefined;
-  }while(pageKey);
+ for(const chain of supportedChains){
+  const chainContracts=contracts.filter(c=>c.chain===chain.id).map(c=>c.address);
+  for(let batch=0;batch<chainContracts.length;batch+=45){
+   const b=chainContracts.slice(batch,batch+45);let pageKey:string|undefined;let pages=0;
+   do{
+    if(++pages>100)throw Error('Gallery too large to fully load; try again later');
+    const params:Record<string,string>={owner,withMetadata:'true',pageSize:'100',orderBy:'transferTime'};
+    b.forEach((a,i)=>params[`contractAddresses[${i}]`]=a);
+    if(pageKey)params.pageKey=pageKey;
+    const d=await alchemy('getNFTsForOwner',params,chain.id,true);
+    if(!Array.isArray(at(d,'ownedNfts')))throw Error('Unexpected NFT ownership response');
+    all.push(...asArray(at(d,'ownedNfts')).map((v:unknown)=>({...nftOf(v),chainId:chain.id})));
+    pageKey=asText(at(d,'pageKey')) || undefined;
+   }while(pageKey);
+  }
  }
  // Sort newest ownership transfer first; never compare token IDs across collections as a date.
  // Alchemy orderBy=transferTime returns newest-first pages; prefer timestamp when present.
@@ -177,14 +183,14 @@ export async function ownerTokens(owner:string):Promise<NFT[]>{
 // even when burned NFTs make totalSupply smaller than historical mints.
 // Do not treat unrelated errors (funds, wallet limit, RPC) as sold out.
 const MAX_SUPPLY_ERROR=keccak256(toBytes('MaxSupplyExceeded()')).slice(0,10).toLowerCase();
-async function checkMintStatus(address:string):Promise<'minted_out'|'unknown'> {
+async function checkMintStatus(address:string,chain=4663):Promise<'minted_out'|'unknown'> {
  const key=process.env.ALCHEMY_API_KEY;
- const url=key?`https://robinhood-mainnet.g.alchemy.com/v2/${key}`:process.env.ROBINHOOD_RPC_URL;
+ const url=key&&hosts[chain]?`https://${hosts[chain]}.g.alchemy.com/v2/${key}`:publicRpc[chain];
  if(!url)return 'unknown';
  try{
-  const p=BigInt(await rpcCall(address,'price'));
-  const max=BigInt(await rpcCall(address,'maxSupply'));
-  const live=BigInt(await rpcCall(address,'totalSupply'));
+  const p=BigInt(await rpcCall(address,'price',[],chain));
+  const max=BigInt(await rpcCall(address,'maxSupply',[],chain));
+  const live=BigInt(await rpcCall(address,'totalSupply',[],chain));
   if(live>=max)return 'minted_out';
   const encoded=encodeFunctionData({abi:parseAbi(['function mint(uint256) payable']),functionName:'mint',args:[BigInt(1)]});
   const res=await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_call',params:[{to:address,from:'0xb316e8ea7bc9b24ea5fd4ebd07051678c27ffe79',data:encoded,value:'0x'+p.toString(16)},'latest']}) ,cache:'no-store'});
@@ -194,4 +200,4 @@ async function checkMintStatus(address:string):Promise<'minted_out'|'unknown'> {
   return 'unknown'; // could be open; avoid asserting it if simulation fails
  }catch{return 'unknown'}
 }
-export async function mintStatus(address:string){return unstable_cache(()=>checkMintStatus(address),['mint-status-v52',address.toLowerCase()],{revalidate:21600})()}
+export async function mintStatus(address:string,chain=4663){return unstable_cache(()=>checkMintStatus(address,chain),['mint-status-v53',String(chain),address.toLowerCase()],{revalidate:21600})()}

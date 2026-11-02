@@ -140,7 +140,7 @@ function ProfileGalleryForAddress({ address }: { address: string }) {
     {err && <p role="status">{err}</p>}
     <div className="mb-profile-grid">
       {items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((n) =>
-        <Link key={`${n.contract}:${n.tokenId}`} href={tokenHref(n.contract, n.tokenId)}
+        <Link key={`${n.chainId??4663}:${n.contract}:${n.tokenId}`} href={tokenHref(n.contract, n.tokenId,n.chainId??4663)}
           title={`${n.name} · #${n.tokenId}`} className="mb-square">
           {n.image ? <Image src={n.image} alt={n.name} width={512} height={512} unoptimized style={{ width: '100%', height: '100%', objectFit: 'contain', imageRendering: 'pixelated' }} /> : <span>#{n.tokenId}</span>}
         </Link>

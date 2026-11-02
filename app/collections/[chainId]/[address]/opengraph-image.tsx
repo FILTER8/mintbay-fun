@@ -1,3 +1,4 @@
+import { publicRpc, alchemyNetwork,chainNames } from '@/lib/chains';
 import { ImageResponse } from 'next/og';
 import { collection, mintStatus, ADDRESS } from '@/lib/mintbay-gallery';
 import { encodeFunctionData, decodeFunctionResult, parseAbi } from 'viem';
@@ -9,14 +10,14 @@ export const contentType = 'image/png';
 
 export default async function Image({params}:{params:Promise<{chainId:string;address:string}>}){
  const {chainId,address}=await params;
- const c=chainId==='4663'&&ADDRESS.test(address)?await collection(address).catch(()=>null):null;
+ const c=ADDRESS.test(address)?await collection(address,Number(chainId)).catch(()=>null):null;
  const src=c?.previewImage&&(c.previewImage.startsWith('data:image/')||c.previewImage.startsWith('https://'))?c.previewImage:undefined;
  // Read the new public lifetime counter where available. Older contracts can
  // still be confirmed sold out by the existing MaxSupplyExceeded() simulation.
  let minted: bigint | null = null;
  if(c){
   const apiKey=process.env.ALCHEMY_API_KEY;
-  const rpc=apiKey?`https://robinhood-mainnet.g.alchemy.com/v2/${apiKey}`:process.env.ROBINHOOD_RPC_URL;
+  const rpc=apiKey && alchemyNetwork[Number(chainId)] ? `https://${alchemyNetwork[Number(chainId)]}.g.alchemy.com/v2/${apiKey}` : publicRpc[Number(chainId)];
   if(rpc){
    try{
     const abi=parseAbi(['function totalMinted() view returns (uint256)']);
@@ -29,7 +30,7 @@ export default async function Image({params}:{params:Promise<{chainId:string;add
    }catch{/* Old contracts have no totalMinted() getter. */}
   }
  }
- const soldOut = c ? (minted!==null && minted>=BigInt(c.maxSupply)) || (minted===null && await mintStatus(address)==='minted_out') : false;
+ const soldOut = c ? (minted!==null && minted>=BigInt(c.maxSupply)) || (minted===null && await mintStatus(address,Number(chainId))==='minted_out') : false;
  if(soldOut && minted===null && c) minted=BigInt(c.maxSupply);
  const percent=c&&minted!==null&&c.maxSupply>0?Math.max(0,Math.min(100,Number(minted)*100/c.maxSupply)):null;
  const nativeCurrency=chainId==='137'?'POL':'ETH';
@@ -42,7 +43,7 @@ export default async function Image({params}:{params:Promise<{chainId:string;add
     <div style={{display:'flex',flexDirection:'column',gap:16}}>
      <span style={{fontSize:29,color:'#caff45',fontWeight:900}}>MINTBAY.FUN ✳</span>
      <div style={{fontSize:56,fontWeight:900,lineHeight:1.06,overflowWrap:'break-word',maxHeight:235,overflow:'hidden'}}>{c?.name||'ON-CHAIN COLLECTION'}</div>
-     <span style={{fontSize:22,color:'#caff45'}}>ROBINHOOD CHAIN · FULLY ON-CHAIN</span>
+     <span style={{fontSize:22,color:'#caff45'}}>{`${chainNames[Number(chainId)]} · FULLY ON-CHAIN`}</span>
     </div>
     <div style={{display:'flex',flexDirection:'column',gap:10}}>
      <span style={{fontSize:29,fontWeight:800}}>{c?`${c.mintPriceEth} ${nativeCurrency}`:'MINT ON MINTBAY'}</span>
