@@ -114,31 +114,70 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{address:
  let eligibilityError:string|null=null;
  if(wallet){
   try {
-   // Source candidates come from the immutable build, but eligibility is verified against live contract state.
-   const sources=Array.from(new Set([...holderSources,...burnSources,...(oneShot?[address]:[])].map(s=>s.toLowerCase()))).slice(0,12);
-   for(const source of sources){
+   // Build configuration supplies candidate collections; the destination contract is the
+   // authority for whether a source and each source token are actually claimable.
+   const sources=Array.from(new Set([...holderSources,...burnSources,...(oneShot?[address]:[])].map(s=>s.toLowerCase())));
+   if(sources.length>32)throw Error('Too many claim source collections (maximum 32)');
+
+   // Independent sources run concurrently. For each source, batch on-chain reads
+   // rather than sending ownerOf + claimsUsed RPCs serially for every token.
+   const sourceResults=await Promise.allSettled(sources.map(async source=>{
     const target=source as `0x${string}`;
-    const [nfts, holderSettings, burnApproved]=await Promise.all([
-     owned(source,wallet,chainId),holder&&holderSources.some(s=>s.toLowerCase()===source)?safeRead(client,contract,'approvedClaimCollections',[source], [false,BigInt(0)] as readonly [boolean,bigint]):Promise.resolve([false,BigInt(0)] as readonly [boolean,bigint]),
-     burn&&burnSources.some(s=>s.toLowerCase()===source)?safeRead(client,contract,'approvedBurnClaimCollections',[source],false):Promise.resolve(false)
+    const isHolderSource=holder&&holderSources.some(s=>s.toLowerCase()===source);
+    const isBurnSource=burn&&burnSources.some(s=>s.toLowerCase()===source);
+    const [nfts,holderSettings,burnApproved]=await Promise.all([
+     owned(source,wallet,chainId),
+     isHolderSource?safeRead(client,contract,'approvedClaimCollections',[target],[false,BigInt(0)] as readonly [boolean,bigint]):Promise.resolve([false,BigInt(0)] as readonly [boolean,bigint]),
+     isBurnSource?safeRead(client,contract,'approvedBurnClaimCollections',[target],false):Promise.resolve(false),
     ]);
-    for(const nft of nfts.slice(0,100)){
-     const id=BigInt(nft.tokenId);
-     const actualOwner=await safeRead(client,target,'ownerOf',[id],ZERO);
-     if(actualOwner.toLowerCase()!==wallet.toLowerCase())continue;
-     if(holderSettings[0]){
+    const result={holder:[] as typeof methods.holder,burn:[] as typeof methods.burn,oneShot:[] as typeof methods.oneShot};
+    if(!holderSettings[0]&&!burnApproved&&!(oneShot&&source===address.toLowerCase()))return result;
+    const ids=[...new Set(nfts.map(n=>n.tokenId))].filter(validToken);
+    // Keep individual multicalls bounded. 500 tokens can be returned by Alchemy per source.
+    for(let offset=0;offset<ids.length;offset+=50){
+     const batch=ids.slice(offset,offset+50);
+     const calls=batch.flatMap(tokenId=>{
+      const id=BigInt(tokenId);
+      const ownership={address:target,abi,functionName:'ownerOf' as const,args:[id]} as const;
+      if(!holderSettings[0])return [ownership];
       const claimKey=keccak256(encodeAbiParameters([{type:'address'},{type:'uint256'}],[target,id]));
-      const used=await safeRead(client,contract,'claimsUsed',[claimKey],BigInt(0));
-      const left=claimPerToken-used;
-      if(left>BigInt(0))methods.holder.push({source,tokenId:nft.tokenId,priceWei:holderSettings[1].toString(),remaining:Number(left)});
+      const usage={address:contract,abi,functionName:'claimsUsed' as const,args:[claimKey]} as const;
+      return [ownership,usage];
+     });
+     const reads=await client.multicall({contracts:calls,allowFailure:true});
+     let index=0;
+     const eligibleOneShot:string[]=[];
+     for(const tokenId of batch){
+      const ownerResult=reads[index++];
+      const usedResult=holderSettings[0]?reads[index++]:null;
+      if(ownerResult.status!=='success'||String(ownerResult.result).toLowerCase()!==wallet.toLowerCase())continue;
+      if(holderSettings[0]&&usedResult?.status==='success'){
+       const left=claimPerToken-BigInt(usedResult.result as bigint);
+       if(left>BigInt(0))result.holder.push({source,tokenId,priceWei:holderSettings[1].toString(),remaining:Number(left)});
+      }
+      if(burnApproved)result.burn.push({source,tokenId});
+      if(oneShot&&source===address.toLowerCase())eligibleOneShot.push(tokenId);
      }
-     if(burnApproved)methods.burn.push({source,tokenId:nft.tokenId});
-     if(oneShot && source===address.toLowerCase()){
-      // A successful eth_call proves both lineage eligibility and spare lifetime capacity.
-      try {await client.simulateContract({address:contract,abi,functionName:'oneShotRemint',args:[id],account:wallet as `0x${string}`});methods.oneShot.push({tokenId:nft.tokenId});}catch{}
+     if(eligibleOneShot.length){
+      // One-shot eligibility cannot be inferred from ownership; the simulation
+      // checks the on-chain lineage and remint capacity for each candidate.
+      const simulations=await Promise.allSettled(eligibleOneShot.map(tokenId=>
+       client.simulateContract({address:contract,abi,functionName:'oneShotRemint',args:[BigInt(tokenId)],account:wallet as `0x${string}`})
+      ));
+      simulations.forEach((r,i)=>{if(r.status==='fulfilled')result.oneShot.push({tokenId:eligibleOneShot[i]});});
      }
     }
+    return result;
+   }));
+   const errors:string[]=[];
+   for(const item of sourceResults){
+    if(item.status==='fulfilled'){
+     methods.holder.push(...item.value.holder);
+     methods.burn.push(...item.value.burn);
+     methods.oneShot.push(...item.value.oneShot);
+    }else errors.push(item.reason instanceof Error?item.reason.message:'Source collection unavailable');
    }
+   if(errors.length)eligibilityError=`Some whitelist contracts could not be checked (${errors.length}/${sources.length}). ${errors[0]}`;
   }catch(e){eligibilityError=e instanceof Error?e.message:'Eligibility temporarily unavailable';}
  }
   // Legacy 8x8 free mint is freeMint(hoodieId), not V5 holderClaim(source,id).
