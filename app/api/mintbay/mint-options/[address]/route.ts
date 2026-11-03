@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createPublicClient, http, parseAbi, encodeAbiParameters, keccak256, isAddress } from 'viem';
+import { createPublicClient, http, parseAbi, encodeAbiParameters, keccak256, isAddress, parseAbiItem } from 'viem';
 import { supportedChains, publicRpc, alchemyNetwork } from '@/lib/chains';
 import { collection } from '@/lib/mintbay-gallery';
 
@@ -9,6 +9,16 @@ const API = process.env.MINTBAY_API_URL || 'https://api.mintbay.fun';
 const ZERO = '0x0000000000000000000000000000000000000000' as const;
 // One legacy collection, no change to V5.1 collections.
 const LEGACY_8X8 = '0x2ee6305804dd94f7ff695c5ab1f3ae805f317653';
+// These three entries are written directly by the HoodiePunks X BankrBot
+// constructor and therefore have NO ApprovedClaimCollectionSet logs.
+// Never use this fallback for unrelated Mintbay collections.
+const HOODIEPUNKS_INITIAL_SOURCES = [
+ '0x9Ec6C5b9f572A9B02138E553BC5F5882Da735F45',
+ '0x2eE6305804dD94F7ff695C5Ab1f3AE805f317653',
+ '0xC8E36aE47246e5943da2B228fbAff1Fb27a473B0',
+];
+const CLAIM_SET_EVENT = parseAbiItem('event ApprovedClaimCollectionSet(address indexed collection, bool approved, uint256 priceEth)');
+const BURN_SET_EVENT = parseAbiItem('event BurnClaimCollectionSet(address indexed sourceCollection, bool approved)');
 const LEGACY_HOODIE = '0x9Ec6C5b9f572A9B02138E553BC5F5882Da735F45';
 const legacyAbi = parseAbi([
   'function hoodieClaimed(uint256) view returns (bool)',
@@ -38,6 +48,28 @@ const text=(v:unknown):string=> typeof v==='string'?v:'';
 const validToken=(v:string)=>/^\d{1,78}$/.test(v);
 const asSources=(v:unknown):string[]=>list(v).map(x=>typeof x==='string'?x:text(obj(x).contract)).filter((s):s is `0x${string}`=>isAddress(s));
 const get=(o:unknown,k:string):unknown=>obj(o)[k];
+const uniqueAddresses=(values:string[])=>Array.from(new Set(values.filter((value):value is `0x${string}`=>isAddress(value)).map(a=>a.toLowerCase())));
+
+// getLogs is attempted against the complete history, not just the last N blocks.
+// Alchemy Free currently restricts eth_getLogs block ranges on several chains.
+// If it rejects a full-history scan, we expose that limitation instead of
+// incorrectly claiming that newly added whitelists do not exist.
+async function discoverEvents(client:ReturnType<typeof getClient>, contract:`0x${string}`, enabled:boolean, event:typeof CLAIM_SET_EVENT | typeof BURN_SET_EVENT):Promise<{sources:string[];error:string|null}>{
+ if(!enabled)return {sources:[],error:null};
+ try{
+  const rawFrom=process.env.MINTBAY_WHITELIST_FROM_BLOCK;
+  // Optional optimization: set this to the earliest Mintbay deployment block.
+  const fromBlock=rawFrom && /^\d+$/.test(rawFrom)?BigInt(rawFrom):BigInt(0);
+  const logs=await client.getLogs({address:contract,event,fromBlock,toBlock:'latest'});
+  const sources=logs.map(log=>'collection' in log.args ? log.args.collection : ('sourceCollection' in log.args ? log.args.sourceCollection : undefined))
+   .filter((v):v is `0x${string}`=>typeof v==='string'&&isAddress(v));
+  return {sources:uniqueAddresses(sources),error:null};
+ }catch(e){
+  console.warn('[mint-options] whitelist log scan unavailable',e);
+  return {sources:[],error:'Live whitelist event discovery is unavailable on this RPC plan. Initial configured sources are still verified on-chain.'};
+ }
+}
+
 async function safeRead<T>(client:ReturnType<typeof getClient>,address:`0x${string}`,functionName:string,args:unknown[]=[],fallback:T):Promise<T>{
  try {return await client.readContract({address,abi,functionName: functionName as 'price',args:args as never}) as T;} catch{return fallback;}
 }
@@ -79,6 +111,7 @@ async function owned(address:string,owner:string,chainId:number):Promise<Array<{
   for(const n of list(get(data,'ownedNfts'))){const id=String(get(n,'tokenId')??''); if(validToken(id))all.push({contract:address,tokenId:id});}
   cursor=text(get(data,'pageKey'))||undefined;
   if(!cursor)break;
+  if(p===4)throw Error('Wallet holds more than 500 NFTs in a source collection; pagination is incomplete');
  }
  return all;
 }
@@ -108,38 +141,81 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{address:
  const v6=obj(get(buildConfig,'mintbayV6'));
  const v5=obj(get(buildConfig,'mintbayV5'));
  const features=Number(get(v6,'schemaVersion'))===6 ? v6 : v5;
- const holderSources=holder?asSources(get(get(features,'holderClaim'),'sourceCollections')):[];
- const burnSources=burn?asSources(get(get(features,'burnAndClaim'),'sourceCollections')):[];
+ const configuredHolder=holder?asSources(get(get(features,'holderClaim'),'sourceCollections')):[];
+ const configuredBurn=burn?asSources(get(get(features,'burnAndClaim'),'sourceCollections')):[];
+ const initialHolder=c.name.trim().toLowerCase()==='hoodiepunks x bankrbot' && chainId===4663
+   ? HOODIEPUNKS_INITIAL_SOURCES:[];
+ // Never depend only on the build JSON: the contract can change after deploy.
+ const [holderEvents,burnEvents]=await Promise.all([
+   discoverEvents(client,contract,Boolean(wallet)&&holder&&!isLegacy8x8,CLAIM_SET_EVENT),
+   discoverEvents(client,contract,Boolean(wallet)&&burn&&!isLegacy8x8,BURN_SET_EVENT),
+ ]);
+ const holderSources=uniqueAddresses([...configuredHolder,...initialHolder,...holderEvents.sources]);
+ const burnSources=uniqueAddresses([...configuredBurn,...burnEvents.sources]);
  const methods:{holder:Array<{source:string;tokenId:string;priceWei:string;remaining:number}>; burn:Array<{source:string;tokenId:string}>;oneShot:Array<{tokenId:string}>}={holder:[],burn:[],oneShot:[]};
- let eligibilityError:string|null=null;
- if(wallet){
-  try {
-   // Source candidates come from the immutable build, but eligibility is verified against live contract state.
-   const sources=Array.from(new Set([...holderSources,...burnSources,...(oneShot?[address]:[])].map(s=>s.toLowerCase()))).slice(0,12);
-   for(const source of sources){
+ let eligibilityError:string|null=[holderEvents.error,burnEvents.error].filter(Boolean).join(' ')||null;
+ if(wallet && !isLegacy8x8){
+  if(!process.env.ALCHEMY_API_KEY || !alchemyNetwork[chainId]){
+   eligibilityError='Alchemy NFT API is required to discover wallet token IDs.';
+  }else{
+   const sources=uniqueAddresses([...holderSources,...burnSources,...(oneShot?[address]:[])]);
+   // A single failed source must not hide eligibility for the other sources.
+   const results=await Promise.allSettled(sources.map(async source=>{
     const target=source as `0x${string}`;
-    const [nfts, holderSettings, burnApproved]=await Promise.all([
-     owned(source,wallet,chainId),holder&&holderSources.some(s=>s.toLowerCase()===source)?safeRead(client,contract,'approvedClaimCollections',[source], [false,BigInt(0)] as readonly [boolean,bigint]):Promise.resolve([false,BigInt(0)] as readonly [boolean,bigint]),
-     burn&&burnSources.some(s=>s.toLowerCase()===source)?safeRead(client,contract,'approvedBurnClaimCollections',[source],false):Promise.resolve(false)
+    const [holderSettings,burnApproved]=await Promise.all([
+     holder&&holderSources.includes(source)
+       ?client.readContract({address:contract,abi,functionName:'approvedClaimCollections',args:[target]})
+       :Promise.resolve([false,BigInt(0)] as const),
+     burn&&burnSources.includes(source)
+       ?client.readContract({address:contract,abi,functionName:'approvedBurnClaimCollections',args:[target]})
+       :Promise.resolve(false),
     ]);
-    for(const nft of nfts.slice(0,100)){
-     const id=BigInt(nft.tokenId);
-     const actualOwner=await safeRead(client,target,'ownerOf',[id],ZERO);
-     if(actualOwner.toLowerCase()!==wallet.toLowerCase())continue;
+    if(!holderSettings[0]&&!burnApproved&&!(oneShot&&source===address.toLowerCase()))return {holder:[],burn:[],oneShot:[]};
+    const nfts=await owned(source,wallet,chainId);
+    const ids=Array.from(new Set(nfts.map(n=>n.tokenId))); 
+    const checked:PromiseSettledResult<{holder?:{source:string;tokenId:string;priceWei:string;remaining:number};burn?:{source:string;tokenId:string};oneShot?:{tokenId:string}}|null>[]=[];
+    for(let start=0;start<ids.length;start+=12){
+      const batch=ids.slice(start,start+12);
+      const items=await Promise.allSettled(batch.map(async tokenId=>{
+     const id=BigInt(tokenId);
+     // Ownership and claim state remain authoritative on the destination/source contracts.
+     const actualOwner=await client.readContract({address:target,abi,functionName:'ownerOf',args:[id]});
+     if(actualOwner.toLowerCase()!==wallet.toLowerCase())return null;
+     const eligible:{holder?:{source:string;tokenId:string;priceWei:string;remaining:number};burn?:{source:string;tokenId:string};oneShot?:{tokenId:string}}={};
      if(holderSettings[0]){
       const claimKey=keccak256(encodeAbiParameters([{type:'address'},{type:'uint256'}],[target,id]));
-      const used=await safeRead(client,contract,'claimsUsed',[claimKey],BigInt(0));
+      const used=await client.readContract({address:contract,abi,functionName:'claimsUsed',args:[claimKey]});
       const left=claimPerToken-used;
-      if(left>BigInt(0))methods.holder.push({source,tokenId:nft.tokenId,priceWei:holderSettings[1].toString(),remaining:Number(left)});
+      if(left>BigInt(0))eligible.holder={source,tokenId,priceWei:holderSettings[1].toString(),remaining:Number(left)};
      }
-     if(burnApproved)methods.burn.push({source,tokenId:nft.tokenId});
-     if(oneShot && source===address.toLowerCase()){
-      // A successful eth_call proves both lineage eligibility and spare lifetime capacity.
-      try {await client.simulateContract({address:contract,abi,functionName:'oneShotRemint',args:[id],account:wallet as `0x${string}`});methods.oneShot.push({tokenId:nft.tokenId});}catch{}
+     if(burnApproved)eligible.burn={source,tokenId};
+     if(oneShot&&source===address.toLowerCase()){
+      try{await client.simulateContract({address:contract,abi,functionName:'oneShotRemint',args:[id],account:wallet as `0x${string}`});eligible.oneShot={tokenId};}catch{}
      }
+     return eligible;
+      }));
+      checked.push(...items);
+    }
+    const local={holder:[] as typeof methods.holder,burn:[] as typeof methods.burn,oneShot:[] as typeof methods.oneShot};
+    for(const item of checked){
+     if(item.status==='rejected')throw item.reason;
+     if(item.value?.holder)local.holder.push(item.value.holder);
+     if(item.value?.burn)local.burn.push(item.value.burn);
+     if(item.value?.oneShot)local.oneShot.push(item.value.oneShot);
+    }
+    return local;
+   }));
+   for(const result of results){
+    if(result.status==='fulfilled'){
+     methods.holder.push(...result.value.holder);
+     methods.burn.push(...result.value.burn);
+     methods.oneShot.push(...result.value.oneShot);
+    }else{
+     console.warn('[mint-options] source eligibility failure',result.reason);
+     eligibilityError=[eligibilityError,'Some whitelist ownership/claim checks could not complete.'].filter(Boolean).join(' ');
     }
    }
-  }catch(e){eligibilityError=e instanceof Error?e.message:'Eligibility temporarily unavailable';}
+  }
  }
   // Legacy 8x8 free mint is freeMint(hoodieId), not V5 holderClaim(source,id).
   // Never infer eligibility from the uploaded build: ownership and claimed flag are on-chain.
