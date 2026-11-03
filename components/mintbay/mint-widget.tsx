@@ -133,7 +133,7 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
     setBusy('Confirm claim in wallet');
     hash=isLegacy8x8
       ? await writeContractAsync({address:contract,abi,functionName:'freeMint',args:[BigInt(chosen.tokenId)],chainId})
-      : await writeContractAsync({address:contract,abi,functionName:'holderClaim',args:[chosen.source as `0x${string}`,BigInt(chosen.tokenId)],value:BigInt(chosen.priceWei),chainId});
+      : await writeContractAsync({address:contract,abi,functionName:'holderClaim',args:[chosen.source as `0x${string}`,BigInt(chosen.tokenId)],value:BigInt(chosen.priceWei),gas:BigInt(2500000),chainId});
    }else if(tab==='burn'){
     if(!chosen||!hasSource(chosen))throw Error('Choose an eligible NFT to burn.');
     const original=chosen.source as `0x${string}`;
