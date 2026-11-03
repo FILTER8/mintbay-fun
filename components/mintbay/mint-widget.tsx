@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Image from 'next/image';
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 import { formatEther, parseAbi, parseEther } from 'viem';
 import { WalletConnect } from '@/components/wallet-connect';
@@ -20,6 +21,7 @@ const abi = parseAbi([
 type Claim = {source:string;tokenId:string;priceWei:string;remaining:number};
 type Burn = {source:string;tokenId:string};
 type OneShot = {tokenId:string};
+type Preview = {image:string|null;name:string};
 type Option = Claim | Burn | OneShot;
 const hasSource = (o: Option): o is Claim | Burn => 'source' in o;
 const hasPrice = (o: Option): o is Claim => 'priceWei' in o;
@@ -50,6 +52,7 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
  const [tab,setTab]=useState<'public'|'holder'|'burn'|'oneShot'>('public');
  const [selected,setSelected]=useState('');
  const [consumed,setConsumed]=useState<Record<string,Option>>({});
+ const [oneShotPreviews,setOneShotPreviews]=useState<Record<string,Preview>>({});
  const [refresh,setRefresh]=useState(0);
  useEffect(()=>{
   const abort=new AbortController();
@@ -75,6 +78,40 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
  const claimedOptions=Object.entries(consumed)
   .filter(([key])=>key.startsWith(`${tab}:`))
   .map(([,option])=>option);
+ // Load artwork ONLY for One Shot: these NFTs will be permanently burned.
+ // Holder Claim and Burn & Claim remain ID-only and make zero image requests.
+ const oneShotIds=(data?.methods.oneShot??[]).map(o=>o.tokenId).join(',');
+ useEffect(()=>{
+  if(tab!=='oneShot'||!oneShotIds)return;
+  const controller=new AbortController();
+  const ids=oneShotIds.split(',');
+  // Limited concurrency protects the RPC and keeps the wallet picker responsive.
+  async function load(){
+   let next=0;
+   const workers=Array.from({length:Math.min(4,ids.length)},async()=>{
+    while(next<ids.length&&!controller.signal.aborted){
+     const tokenId=ids[next++];
+     const key=`${address.toLowerCase()}:${tokenId}`;
+     if(oneShotPreviews[key])continue;
+     try{
+      const q=new URLSearchParams({source:address,tokenId,chainId:String(chainId)});
+      const response=await fetch(`/api/mintbay/mint-preview?${q}`,{signal:controller.signal});
+      if(!response.ok)throw Error('Preview unavailable');
+      const result:unknown=await response.json();
+      const record=result&&typeof result==='object'?result as Record<string,unknown>:{};
+      const preview:Preview={image:typeof record.image==='string'?record.image:null,name:typeof record.name==='string'?record.name:`#${tokenId}`};
+      if(!controller.signal.aborted)setOneShotPreviews(previous=>({...previous,[key]:preview}));
+     }catch{
+      if(!controller.signal.aborted)setOneShotPreviews(previous=>({...previous,[key]:{image:null,name:`#${tokenId}`}}));
+     }
+    }
+   });
+   await Promise.all(workers);
+  }
+  void load();
+  return()=>controller.abort();
+ // Preview state is intentionally excluded: loading one thumbnail must not restart the queue.
+ },[tab,oneShotIds,address,chainId]);
  const chosen=options.find(t=>optionKey(t,address)===selected);
  const sourceGroups=Array.from(new Set([...options,...claimedOptions].map(o=>hasSource(o)?o.source.toLowerCase():address.toLowerCase())));
  const availableCounts={
@@ -164,16 +201,23 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
          <div style={{fontSize:11,fontWeight:800,overflowWrap:'anywhere',marginBottom:7}}>
           {tab==='oneShot'?'THIS COLLECTION':'WHITELIST CONTRACT'} · {source}
          </div>
-         <div style={{display:'flex',flexWrap:'wrap',gap:7}}>
+         <div style={tab==='oneShot'
+          ? {display:'grid',gridTemplateColumns:'repeat(auto-fill, minmax(110px, 1fr))',gap:10}
+          : {display:'flex',flexWrap:'wrap',gap:7}}>
           {entries.map(({o,disabled})=>{
            const key=optionKey(o,address);
            const picked=!disabled && selected===key;
+           const preview=tab==='oneShot'?oneShotPreviews[key]:undefined;
            return <button key={`${key}:${disabled?'used':'ready'}`} type="button" disabled={disabled||Boolean(busy)}
-            aria-pressed={picked} aria-label={`Token #${o.tokenId}${disabled?' (claimed)':''}`}
-            title={disabled?'Already claimed / used':`Select #${o.tokenId}`}
+            aria-pressed={picked} aria-label={`Token #${o.tokenId}${disabled?' (used)':''}`}
+            title={disabled?'Already used':`Select #${o.tokenId}`}
             onClick={()=>setSelected(key)}
-            style={{border:picked?'2px solid #151515':'1px solid #151515',borderRadius:0,padding:'8px 12px',background:picked?'#caff45':'#f7f7f1',color:'#151515',cursor:disabled?'not-allowed':'pointer',font:'inherit',fontWeight:800,fontSize:13,opacity:disabled?0.3:1,minWidth:65}}>
-            #{o.tokenId}{disabled?' ✓':''}
+            style={{border:picked?'2px solid #151515':'1px solid #151515',borderRadius:0,padding:tab==='oneShot'?5:'8px 12px',background:picked?'#caff45':'#f7f7f1',color:'#151515',cursor:disabled?'not-allowed':'pointer',font:'inherit',fontWeight:800,fontSize:13,opacity:disabled?0.3:1,minWidth:tab==='oneShot'?0:65,textAlign:tab==='oneShot'?'left':'center'}}>
+            {tab==='oneShot'&&<span style={{display:'block',position:'relative',aspectRatio:'1',background:'#e8e8e3',overflow:'hidden'}}>
+             {preview?.image?<Image src={preview.image} alt={`NFT #${o.tokenId} to burn`} fill unoptimized sizes="120px" style={{objectFit:'contain',imageRendering:'pixelated'}}/>:
+              <span style={{display:'flex',height:'100%',alignItems:'center',justifyContent:'center',fontSize:11}}>{preview?'NO IMAGE':'LOADING…'}</span>}
+            </span>}
+            <span style={{display:'block',marginTop:tab==='oneShot'?5:0}}>#{o.tokenId}{disabled?' ✓':''}</span>
            </button>;
           })}
          </div>
