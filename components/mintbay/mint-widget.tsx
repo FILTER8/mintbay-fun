@@ -7,6 +7,12 @@ import { formatEther, parseAbi, parseEther } from 'viem';
 import { WalletConnect } from '@/components/wallet-connect';
 
 import { chainNames, supportedChains } from '@/lib/chains';
+// Transaction gas ceilings. Wallet fee presets remain wallet-controlled.
+const SINGLE_MINT_GAS = BigInt(2500000);
+const publicMintGasLimit = (quantity:number) => {
+ const estimated = BigInt(quantity) * BigInt(850000) + BigInt(300000);
+ return estimated > SINGLE_MINT_GAS ? estimated : SINGLE_MINT_GAS;
+};
 const LEGACY_8X8 = '0x2ee6305804dd94f7ff695c5ab1f3ae805f317653';
 const abi = parseAbi([
   'function mint(uint256 quantity) payable',
@@ -113,6 +119,7 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
  // Preview state is intentionally excluded: loading one thumbnail must not restart the queue.
  },[tab,oneShotIds,address,chainId]);
  const chosen=options.find(t=>optionKey(t,address)===selected);
+ const requestedGasLimit = tab==='public' ? publicMintGasLimit(quantity) : SINGLE_MINT_GAS;
  const sourceGroups=Array.from(new Set([...options,...claimedOptions].map(o=>hasSource(o)?o.source.toLowerCase():address.toLowerCase())));
  const availableCounts={
   holder:(data?.methods.holder??[]).filter(o=>!consumed[usedKey('holder',o)]).length,
@@ -130,15 +137,14 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
     // Pixel-art minting may run multiple trait-selection attempts per NFT.
     // Apply a conservative floor for single mints, scaling for larger quantities.
     // This is a gas ceiling, not a guarantee that a reverting transaction will succeed.
-    const publicGasEstimate=BigInt(quantity)*BigInt(850000)+BigInt(300000);
-    const publicGas=publicGasEstimate>BigInt(2500000)?publicGasEstimate:BigInt(2500000);
+    const publicGas = publicMintGasLimit(quantity);
     hash=await writeContractAsync({address:contract,abi,functionName:'mint',args:[BigInt(quantity)],value:price*BigInt(quantity),gas:publicGas,chainId});
    }else if(tab==='holder'){
     if(!chosen||!hasPrice(chosen))throw Error('Choose an eligible NFT.');
     setBusy('Confirm claim in wallet');
     hash=isLegacy8x8
-      ? await writeContractAsync({address:contract,abi,functionName:'freeMint',args:[BigInt(chosen.tokenId)],chainId})
-      : await writeContractAsync({address:contract,abi,functionName:'holderClaim',args:[chosen.source as `0x${string}`,BigInt(chosen.tokenId)],value:BigInt(chosen.priceWei),gas:BigInt(2500000),chainId});
+      ? await writeContractAsync({address:contract,abi,functionName:'freeMint',args:[BigInt(chosen.tokenId)],gas:SINGLE_MINT_GAS,chainId})
+      : await writeContractAsync({address:contract,abi,functionName:'holderClaim',args:[chosen.source as `0x${string}`,BigInt(chosen.tokenId)],value:BigInt(chosen.priceWei),gas:SINGLE_MINT_GAS,chainId});
    }else if(tab==='burn'){
     if(!chosen||!hasSource(chosen))throw Error('Choose an eligible NFT to burn.');
     const original=chosen.source as `0x${string}`;
@@ -154,11 +160,11 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
      if(receipt.status!=='success')throw Error('NFT approval failed');
     }
     setBusy('Confirm permanent burn and claim');
-    hash=await writeContractAsync({address:contract,abi,functionName:'burnAndClaim',args:[original,id],value:BigInt(0),gas:BigInt(2500000),chainId});
+    hash=await writeContractAsync({address:contract,abi,functionName:'burnAndClaim',args:[original,id],value:BigInt(0),gas:SINGLE_MINT_GAS,chainId});
    }else{
     if(!chosen)throw Error('Choose an eligible NFT.');
     setBusy('Confirm One Shot in wallet');
-    hash=await writeContractAsync({address:contract,abi,functionName:'oneShotRemint',args:[BigInt(chosen.tokenId)],gas:BigInt(2500000),chainId});
+    hash=await writeContractAsync({address:contract,abi,functionName:'oneShotRemint',args:[BigInt(chosen.tokenId)],gas:SINGLE_MINT_GAS,chainId});
    }
    setBusy('Waiting for confirmation');
    const receipt=await client.waitForTransactionReceipt({hash});
@@ -236,6 +242,7 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
      }
     </>}
     {data?.eligibilityError&&<p role="status">SOME ELIGIBILITY CHECKS COULD NOT COMPLETE. TRY REFRESHING.</p>}
+    <p style={{fontSize:11,opacity:0.7,margin:'8px 0'}}>MINTBAY REQUESTED GAS LIMIT: {formatCount(Number(requestedGasLimit))} · NETWORK FEE SET BY WALLET. VERIFY GAS LIMIT IN METAMASK BEFORE CONFIRMING.</p>
     {activeChain!==chainId?<button className="btn btn-lime" onClick={()=>switchChain?.({chainId})}>SWITCH TO {chainNames[chainId] || chainId}</button>:<button className="btn btn-lime" disabled={Boolean(busy)||!client||(tab==='public'&&(maxQty===0||status==='minted_out'||remain===0))||(tab!=='public'&&!chosen)} onClick={()=>void perform()}>{busy?`${busy.toUpperCase()}…`:tab==='public'?'MINT NOW ↗':tab==='holder'?(isLegacy8x8?'CLAIM FREE PORTRAIT ↗':'CLAIM NOW ↗'):tab==='burn'?'BURN & CLAIM ↗':'ONE SHOT ↗'}</button>}
    </>}
   </>}
