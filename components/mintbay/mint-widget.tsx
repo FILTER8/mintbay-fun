@@ -127,7 +127,12 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
    if(tab==='public'){
     if(maxQty===0)throw Error('No public mints remaining for this wallet.');
     setBusy('Confirm mint in wallet');
-    hash=await writeContractAsync({address:contract,abi,functionName:'mint',args:[BigInt(quantity)],value:price*BigInt(quantity),chainId});
+    // Pixel-art minting may run multiple trait-selection attempts per NFT.
+    // Apply a conservative floor for single mints, scaling for larger quantities.
+    // This is a gas ceiling, not a guarantee that a reverting transaction will succeed.
+    const publicGasEstimate=BigInt(quantity)*BigInt(850000)+BigInt(300000);
+    const publicGas=publicGasEstimate>BigInt(2500000)?publicGasEstimate:BigInt(2500000);
+    hash=await writeContractAsync({address:contract,abi,functionName:'mint',args:[BigInt(quantity)],value:price*BigInt(quantity),gas:publicGas,chainId});
    }else if(tab==='holder'){
     if(!chosen||!hasPrice(chosen))throw Error('Choose an eligible NFT.');
     setBusy('Confirm claim in wallet');
@@ -149,11 +154,11 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
      if(receipt.status!=='success')throw Error('NFT approval failed');
     }
     setBusy('Confirm permanent burn and claim');
-    hash=await writeContractAsync({address:contract,abi,functionName:'burnAndClaim',args:[original,id],value:BigInt(0),chainId});
+    hash=await writeContractAsync({address:contract,abi,functionName:'burnAndClaim',args:[original,id],value:BigInt(0),gas:BigInt(2500000),chainId});
    }else{
     if(!chosen)throw Error('Choose an eligible NFT.');
     setBusy('Confirm One Shot in wallet');
-    hash=await writeContractAsync({address:contract,abi,functionName:'oneShotRemint',args:[BigInt(chosen.tokenId)],chainId});
+    hash=await writeContractAsync({address:contract,abi,functionName:'oneShotRemint',args:[BigInt(chosen.tokenId)],gas:BigInt(2500000),chainId});
    }
    setBusy('Waiting for confirmation');
    const receipt=await client.waitForTransactionReceipt({hash});
