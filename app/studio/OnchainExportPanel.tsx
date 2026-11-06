@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { compilePngAssets } from "./png-compiler";
+import { compilePngAssets, canonicalizePngProject } from "./png-compiler";
 
 const SETTINGS_KEY = "mintbay-pixelstudio-onchain-v6";
 const DEFAULT_CREATOR_MESSAGE = [
@@ -393,11 +393,12 @@ export default function OnchainExportPanel({
     setPublishing(true);
     setFeedback("Compressing PNG layers and publishing immutable build...");
     try {
-      const { manifest, files, totalBytes } = await compilePngAssets(project);
+      const normalizedArtwork = canonicalizePngProject(project);
+      const { manifest, files, totalBytes } = await compilePngAssets(normalizedArtwork);
       if (totalBytes > 12 * 1024 * 1024) throw new Error("Compressed PNG assets exceed 12 MiB; reduce artwork size before publishing.");
       const form = new FormData();
       form.append("config", JSON.stringify(proposedConfig));
-      form.append("artwork", JSON.stringify(project));
+      form.append("artwork", JSON.stringify(normalizedArtwork));
       form.append("pngManifest", JSON.stringify(manifest));
       files.forEach((blob, index) => form.append(`asset:${index}`, blob, `${String(index).padStart(6, "0")}.png`));
       const response = await fetch("/api/studio/builds", {

@@ -29,6 +29,47 @@ function hex(data: ArrayBuffer): string {
 function pngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('PNG encoding failed')), 'image/png'));
 }
+/** Canonicalize Studio colors without mutating the editable project.
+ * The existing Studio PNG import writes rgb(r, g, b), while V6 accepts #RRGGBB.
+ */
+export function canonicalPixelColor(value: string): string {
+  if (value === 'transparent') return value;
+  if (/^#[\da-f]{6}$/i.test(value)) return value.toLowerCase();
+  if (/^#[\da-f]{3}$/i.test(value)) {
+    const v = value.slice(1).toLowerCase();
+    return `#${v[0]}${v[0]}${v[1]}${v[1]}${v[2]}${v[2]}`;
+  }
+  const match = /^rgb\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)$/i.exec(value);
+  if (match) {
+    const rgb = match.slice(1).map(Number);
+    if (rgb.every(x => x >= 0 && x <= 255)) {
+      return '#' + rgb.map(x => x.toString(16).padStart(2, '0')).join('');
+    }
+  }
+  throw new Error(`Unsupported pixel color: ${value}. Use #RRGGBB or rgb(r, g, b).`);
+}
+
+/** Produces the canonical artwork sent to the existing V6 Worker compiler.
+ * It preserves layer order, IDs, weights and exclusions.
+ */
+export function canonicalizePngProject<T extends PngProject>(project: T): T {
+  return {
+    ...project,
+    layers: project.layers.map(layer => ({
+      ...layer,
+      traits: layer.traits.map(trait => ({
+        ...trait,
+        pixels: trait.pixels.map((pixel, index) => {
+          try { return canonicalPixelColor(pixel); }
+          catch (error) {
+            throw new Error(`Invalid pixel color in ${layer.name} / ${trait.name} at pixel ${index}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }),
+      })),
+    })),
+  } as T;
+}
+
 export async function compilePngAssets(project: PngProject): Promise<{ manifest: PngManifest; files: Blob[]; totalBytes: number }> {
   const n = project.gridSize;
   if (!Number.isInteger(n) || n < 2 || n > 128) throw new Error('Invalid artwork grid size');
@@ -50,7 +91,7 @@ export async function compilePngAssets(project: PngProject): Promise<{ manifest:
       for (let p = 0; p < trait.pixels.length; p++) {
         const color = trait.pixels[p];
         if (color === 'transparent') continue;
-        if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error(`Invalid pixel color in ${layer.name} / ${trait.name}`);
+        if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error(`Invalid pixel color in ${layer.name} / ${trait.name} at pixel ${p}: ${color}`);
         ctx.fillStyle = color;
         ctx.fillRect(p % n, Math.floor(p / n), 1, 1);
       }
