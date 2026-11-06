@@ -27,6 +27,8 @@ const legacyAbi = parseAbi([
 const abi = parseAbi([
   'function maxSupply() view returns (uint256)',
   'function totalSupply() view returns (uint256)',
+  // V5.1/V6 lifetime counter: burns do not reopen mint slots.
+  'function totalMinted() view returns (uint256)',
   'function price() view returns (uint256)',
   'function publicMintsCount(address) view returns (uint256)',
   'function maxMintsPerWallet() view returns (uint256)',
@@ -97,6 +99,56 @@ async function lifetimeMinted(address:string,maxSupply:number,chainId:number):Pr
   return count;
  }catch{return null;}
 }
+// Newer Mintbay contracts expose a lifetime counter. Older collections may only
+// expose circulating totalSupply(), so use historical mint transfers where possible.
+// Never silently treat an RPC failure as zero mints.
+type SupplySource = 'totalMinted' | 'alchemy' | 'totalSupply' | 'unknown';
+type MintSupply = {
+ maxSupply:number;
+ minted:number|null;
+ circulating:number|null;
+ supplySource:SupplySource;
+ maxSupplyVerified:boolean;
+ priceWei:string;
+ priceVerified:boolean;
+};
+async function resolveMintSupply(client:ReturnType<typeof getClient>,contract:`0x${string}`,configuredMaxSupply:number,chainId:number):Promise<MintSupply>{
+ const [onChainMax,onChainLifetime,onChainCirculating,onChainPrice]=await Promise.all([
+  safeRead<bigint|null>(client,contract,'maxSupply',[],null),
+  safeRead<bigint|null>(client,contract,'totalMinted',[],null),
+  safeRead<bigint|null>(client,contract,'totalSupply',[],null),
+  safeRead<bigint|null>(client,contract,'price',[],null),
+ ]);
+ const maxSupply=Number(onChainMax??BigInt(configuredMaxSupply));
+ const circulating=onChainCirculating===null?null:Number(onChainCirculating);
+ let minted:number|null=null;
+ let supplySource:SupplySource='unknown';
+ if(onChainLifetime!==null && (onChainCirculating===null || onChainLifetime>=onChainCirculating)){
+  // Canonical V5.1/V6 source. Accurate even after burns/One Shot remints.
+  minted=Number(onChainLifetime);
+  supplySource='totalMinted';
+ }else{
+  // Legacy path: Alchemy tracks mint transfers from the zero address.
+  // Only use it when the result is complete and not below circulating supply.
+  const transferCount=await lifetimeMinted(contract,maxSupply,chainId);
+  if(transferCount!==null && (circulating===null || transferCount>=circulating)){
+   minted=transferCount;
+   supplySource='alchemy';
+  }else if(circulating!==null){
+   // Circulating supply alone cannot detect burned mint slots. The client
+   // displays this as CIRCULATING, and simulates before an uncertain mint.
+   minted=circulating;
+   supplySource='totalSupply';
+  }
+ }
+ return {
+  maxSupply,minted,circulating,supplySource,
+  maxSupplyVerified:onChainMax!==null,
+  priceWei:(onChainPrice??BigInt(0)).toString(),
+  priceVerified:onChainPrice!==null,
+ };
+}
+
 async function owned(address:string,owner:string,chainId:number):Promise<Array<{contract:string;tokenId:string}>>{
  const key=process.env.ALCHEMY_API_KEY;
  if(!key||!alchemyNetwork[chainId])return [];
@@ -124,17 +176,24 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{address:
  const c=await collection(address,chainId).catch(()=>null);
  if(!c)return NextResponse.json({error:'Collection not registered'},{status:404});
   const contract=address as `0x${string}`;
-  const isLegacy8x8=address.toLowerCase()===LEGACY_8X8;
+  const isLegacy8x8=chainId===4663 && address.toLowerCase()===LEGACY_8X8;
  const wallet=request.nextUrl.searchParams.get('wallet')||'';
  if(wallet && !isAddress(wallet))return NextResponse.json({error:'Invalid wallet'},{status:400});
- const [max, circulating, price, transferCount, buildRes, publicCount, perWallet, holder, burn, oneShot, claimPerToken]=await Promise.all([
-  safeRead(client,contract,'maxSupply',[],BigInt(c.maxSupply)),safeRead(client,contract,'totalSupply',[],BigInt(0)),safeRead(client,contract,'price',[],BigInt(0)),lifetimeMinted(address,c.maxSupply,chainId),
+ // Lightweight polling endpoint: do not rescan holder wallets just to refresh supply.
+ if(request.nextUrl.searchParams.get('supplyOnly')==='1'){
+  const supply=await resolveMintSupply(client,contract,c.maxSupply,chainId);
+  return NextResponse.json(supply,{headers:{'Cache-Control':'no-store'}});
+ }
+ const [supply,buildRes,publicCount,perWallet,holder,burn,oneShot,claimPerToken]=await Promise.all([
+  resolveMintSupply(client,contract,c.maxSupply,chainId),
   fetch(`${API}/v1/builds/${(c as typeof c & {buildId?:string}).buildId}/config`,{next:{revalidate:600}}).then(r=>r.ok?r.json():null).catch(()=>null),
   wallet?safeRead(client,contract,'publicMintsCount',[wallet],BigInt(0)):Promise.resolve(BigInt(0)),
   safeRead(client,contract,'maxMintsPerWallet',[],BigInt(0)),
-  safeRead(client,contract,'holderClaimEnabled',[],false),safeRead(client,contract,'burnClaimEnabled',[],false),safeRead(client,contract,'oneShotEnabled',[],false),safeRead(client,contract,'claimsPerToken',[],BigInt(0))
+  safeRead(client,contract,'holderClaimEnabled',[],false),
+  safeRead(client,contract,'burnClaimEnabled',[],false),
+  safeRead(client,contract,'oneShotEnabled',[],false),
+  safeRead(client,contract,'claimsPerToken',[],BigInt(0))
  ]);
- const minted=transferCount!==null && transferCount>=Number(circulating) ? transferCount : null;
  // Read the schema of the immutable Studio build. V6 and V5.1 use the same
  // Holder Claim contract ABI, but store feature configuration under different keys.
  const buildConfig=obj(buildRes);
@@ -248,10 +307,10 @@ export async function GET(request:NextRequest,{params}:{params:Promise<{address:
     methods.burn=[];
     methods.oneShot=[];
     // Legacy contract does not expose V5 claim/oneShot flags.
-    return NextResponse.json({maxSupply:Number(max),minted,priceWei:price.toString(),remainingAllowance:null,
+    return NextResponse.json({...supply,remainingAllowance:null,
       features:{holder:true,burn:false,oneShot:false},methods,eligibilityError:legacyError},
       {headers:{'Cache-Control':'no-store'}});
   }
   const remainingAllowance=perWallet===BigInt(0)?null:Math.max(0,Number(perWallet-publicCount));
- return NextResponse.json({maxSupply:Number(max),minted,priceWei:price.toString(),remainingAllowance,features:{holder,burn,oneShot},methods,eligibilityError},{headers:{'Cache-Control':'no-store'}});
+ return NextResponse.json({...supply,remainingAllowance,features:{holder,burn,oneShot},methods,eligibilityError},{headers:{'Cache-Control':'no-store'}});
 }
