@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import { useAccount, useChainId, usePublicClient, useSwitchChain, useWriteContract } from 'wagmi';
 import { formatEther, parseAbi, parseEther } from 'viem';
@@ -68,6 +68,8 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
  const [selected,setSelected]=useState('');
  const [consumed,setConsumed]=useState<Record<string,Option>>({});
  const [oneShotPreviews,setOneShotPreviews]=useState<Record<string,Preview>>({});
+ // Cache loaded preview IDs without making each thumbnail update restart the effect.
+ const previewLoadedIds=useRef<Set<string>>(new Set());
  const [refresh,setRefresh]=useState(0);
  const [liveSupply,setLiveSupply]=useState<LiveSupply|null>(null);
  const [liveSupplyLoading,setLiveSupplyLoading]=useState(true);
@@ -75,9 +77,8 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
  // Prefer the current contract's lifetime count, but never assume that older
  // Mintbay / legacy 8x8 contracts implement it. Read each method independently.
  useEffect(()=>{
-  if(!client){setLiveSupply(null);setLiveSupplyLoading(false);return;}
+  if(!client)return;
   let canceled=false;
-  setLiveSupplyLoading(true);
   async function checkSupply(){
    if(!client)return;
    const [lifetime,circulating,cap,priceWei]=await Promise.all([
@@ -97,7 +98,6 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
  },[client,contract,refresh]);
  useEffect(()=>{
   const abort=new AbortController();
-  setLoading(true);
   fetch(`/api/mintbay/mint-options/${address}?${new URLSearchParams({...wallet?{wallet}:{},chainId:String(chainId)})}`,{signal:abort.signal,cache:'no-store'})
    .then(async r=>{const json:unknown=await r.json();if(!r.ok)throw Error('Unable to check mint options');return json as Eligibility;})
    .then(value=>{if(!abort.signal.aborted){setData(value);setApiSupply(value);setLoading(false);}})
@@ -141,7 +141,7 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
  // The parent status is only a fallback; direct lifetime readings always win.
  const soldOut=lifetime!==null?lifetime>=cap:(minted!==null&&minted>=cap)||status==='minted_out';
  const supplyUnknown=minted===null&&!soldOut;
- const supplyChecking=supplyUnknown&&liveSupplyLoading;
+ const supplyChecking=supplyUnknown&&Boolean(client)&&liveSupplyLoading;
  const price=liveSupply?.priceWei??(backend?.priceWei && backend.priceVerified!==false?BigInt(backend.priceWei):parseEther(fallbackPrice));
  const allowance=data?.remainingAllowance??null;
  const maxQty=soldOut||supplyUnknown?0:Math.max(0,Math.min(20,remain??20,allowance??20));
@@ -168,7 +168,7 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
     while(next<ids.length&&!controller.signal.aborted){
      const tokenId=ids[next++];
      const key=`${address.toLowerCase()}:${tokenId}`;
-     if(oneShotPreviews[key])continue;
+     if(previewLoadedIds.current.has(key))continue;
      try{
       const q=new URLSearchParams({source:address,tokenId,chainId:String(chainId)});
       const response=await fetch(`/api/mintbay/mint-preview?${q}`,{signal:controller.signal});
@@ -176,9 +176,15 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
       const result:unknown=await response.json();
       const record=result&&typeof result==='object'?result as Record<string,unknown>:{};
       const preview:Preview={image:typeof record.image==='string'?record.image:null,name:typeof record.name==='string'?record.name:`#${tokenId}`};
-      if(!controller.signal.aborted)setOneShotPreviews(previous=>({...previous,[key]:preview}));
+       if(!controller.signal.aborted){
+        previewLoadedIds.current.add(key);
+        setOneShotPreviews(previous=>({...previous,[key]:preview}));
+       }
      }catch{
-      if(!controller.signal.aborted)setOneShotPreviews(previous=>({...previous,[key]:{image:null,name:`#${tokenId}`}}));
+       if(!controller.signal.aborted){
+        previewLoadedIds.current.add(key);
+        setOneShotPreviews(previous=>({...previous,[key]:{image:null,name:`#${tokenId}`}}));
+       }
      }
     }
    });
@@ -186,7 +192,7 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
   }
   void load();
   return()=>controller.abort();
- // Preview state is intentionally excluded: loading one thumbnail must not restart the queue.
+ // A ref stores loaded IDs so each thumbnail update does not restart this queue.
  },[tab,oneShotIds,address,chainId]);
  const chosen=options.find(t=>optionKey(t,address)===selected);
  const requestedGasLimit = tab==='public' ? publicMintGasLimit(quantity) : SINGLE_MINT_GAS;
@@ -292,6 +298,8 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
      ...(tab==='burn'?{[usedKey('holder',chosen)]:chosen}:{}),
     }));
    }
+   // Reset loading from this event handler, never synchronously in an effect.
+   setLoading(true);setLiveSupplyLoading(Boolean(client));
    setSuccess(hash);setRefresh(n=>n+1);setSelected('');
   }catch(e){setError(e instanceof Error?e.message:'Transaction failed');}finally{setBusy('');}
  }
@@ -390,6 +398,6 @@ function MintWidgetSession({chainId,address,fallbackPrice,maxSupply,wallet,isCon
   </>}
   {success&&<p role="status">CONFIRMED! <a href={`${supportedChains.find(c=>c.id===chainId)?.blockExplorers?.default.url || 'https://robin.etherscan.io'}/tx/${success}`} target="_blank" rel="noreferrer">VIEW TRANSACTION ↗</a></p>}
   {error&&<p role="alert" style={{overflowWrap:'anywhere'}}>{error.slice(0,300)}</p>}
-  {isConnected&&<button type="button" onClick={()=>{setRefresh(n=>n+1);setError('');}} style={{display:'block',background:'none',border:0,padding:'12px 0 0',font:'inherit',cursor:'pointer',textDecoration:'underline'}}>REFRESH ELIGIBILITY ↗</button>}
+  {isConnected&&<button type="button" onClick={()=>{setLoading(true);setLiveSupplyLoading(Boolean(client));setRefresh(n=>n+1);setError('');}} style={{display:'block',background:'none',border:0,padding:'12px 0 0',font:'inherit',cursor:'pointer',textDecoration:'underline'}}>REFRESH ELIGIBILITY ↗</button>}
  </div>;
 }

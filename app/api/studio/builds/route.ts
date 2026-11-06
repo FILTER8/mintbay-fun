@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-const LIMIT = 5 * 1024 * 1024;
+const LIMIT = 16 * 1024 * 1024;
 // Keep the existing API by default until the new Worker hostname is tested.
 // Configure MINTBAY_API_BASE_URL on Vercel when api.mintbay.fun is ready.
 const base = (process.env.MINTBAY_API_BASE_URL || "https://api.mintbay.xyz").replace(/\/$/, "");
@@ -28,11 +28,12 @@ export async function POST(request: NextRequest) {
   if (!matchSecret(request.headers.get("x-studio-password") || "", password)) {
     return NextResponse.json({ error: "Invalid publishing password" }, { status: 401 });
   }
-  if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
-    return NextResponse.json({ error: "Expected application/json" }, { status: 415 });
+  const contentType = request.headers.get("content-type") || "";
+  if (!contentType.toLowerCase().startsWith("application/json") && !contentType.toLowerCase().startsWith("multipart/form-data;")) {
+    return NextResponse.json({ error: "Expected JSON or multipart/form-data" }, { status: 415 });
   }
   const declaredSize = Number(request.headers.get("content-length") || 0);
-  if (declaredSize > LIMIT) return NextResponse.json({ error: "Build exceeds 5 MiB" }, { status: 413 });
+  if (declaredSize > LIMIT) return NextResponse.json({ error: "Build exceeds 16 MiB" }, { status: 413 });
   // Bounded stream read to reject oversized uploads before buffering all input.
   if (!request.body) return NextResponse.json({ error: "Missing request body" }, { status: 400 });
   const reader = request.body.getReader();
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > LIMIT) { await reader.cancel(); return NextResponse.json({ error: "Build exceeds 5 MiB" }, { status: 413 }); }
+      if (size > LIMIT) { await reader.cancel(); return NextResponse.json({ error: "Build exceeds 16 MiB" }, { status: 413 }); }
       chunks.push(value);
     }
   } finally { reader.releaseLock(); }
@@ -53,7 +54,7 @@ export async function POST(request: NextRequest) {
   try {
     const upstream = await fetch(UPSTREAM, {
       method: "POST",
-      headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+      headers: { "Authorization": `Bearer ${token}`, "Content-Type": contentType },
       body: buffer,
       cache: "no-store",
       signal: AbortSignal.timeout(20000),

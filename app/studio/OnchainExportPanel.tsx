@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { compilePngAssets } from "./png-compiler";
 
 const SETTINGS_KEY = "mintbay-pixelstudio-onchain-v6";
 const DEFAULT_CREATOR_MESSAGE = [
@@ -37,8 +38,9 @@ type ArtProject = {
   gridSize: number;
   supply: number;
   layers: Array<{
+    id: string;
     name: string;
-    traits: Array<{ name: string; weight: number; incompatibleWith: string[] }>;
+    traits: Array<{ id: string; name: string; weight: number; pixels: string[]; incompatibleWith: string[] }>;
   }>;
 };
 
@@ -389,12 +391,19 @@ export default function OnchainExportPanel({
     if (warnings.length) { setFeedback("Fix the highlighted collection checks before publishing."); showValidation(); return; }
     if (!publishPassword.trim()) { setFeedback("Enter your publishing access code to upload to Mintbay API."); return; }
     setPublishing(true);
-    setFeedback("Publishing immutable build to Mintbay API...");
+    setFeedback("Compressing PNG layers and publishing immutable build...");
     try {
+      const { manifest, files, totalBytes } = await compilePngAssets(project);
+      if (totalBytes > 12 * 1024 * 1024) throw new Error("Compressed PNG assets exceed 12 MiB; reduce artwork size before publishing.");
+      const form = new FormData();
+      form.append("config", JSON.stringify(proposedConfig));
+      form.append("artwork", JSON.stringify(project));
+      form.append("pngManifest", JSON.stringify(manifest));
+      files.forEach((blob, index) => form.append(`asset:${index}`, blob, `${String(index).padStart(6, "0")}.png`));
       const response = await fetch("/api/studio/builds", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Studio-Password": publishPassword },
-        body: JSON.stringify({ config: proposedConfig, artwork: project }),
+        headers: { "X-Studio-Password": publishPassword },
+        body: form,
         cache: "no-store",
       });
       const result = await response.json();
@@ -405,7 +414,7 @@ export default function OnchainExportPanel({
       if (typeof result.url !== "string") throw new Error("Build URL missing from API response");
       setPublishedUrl(result.url);
       setPublishPassword("");
-      setFeedback("Build published! Copy the Bankr production deployment prompt below. Bankr must complete V6 deployment preflight and request explicit approval before broadcasting.");
+      setFeedback(`Build published with ${files.length} compressed PNG traits (${(totalBytes / 1024).toFixed(1)} KiB). Existing V6 deployments still use the legacy compiler until the universal renderer is ready.`);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not publish the build");
     } finally { setPublishing(false); }
@@ -434,7 +443,7 @@ export default function OnchainExportPanel({
             <a href={`${API_BASE_URL}/health`} target="_blank" rel="noreferrer" className={buttonClass}>Mintbay API ↗</a>
           </div>
         </div>
-        <p className="mt-3 border-l-4 border-current pl-3 opacity-80">Your artwork stays in your browser until you choose to publish the build. Publishing creates an immutable CC0 NFT art build, not a blockchain transaction.</p>
+        <p className="mt-3 border-l-4 border-current pl-3 opacity-80">Your artwork stays in your browser until you choose to publish the build. Publishing stores your editable JSON plus lossless compressed PNG layers in an immutable CC0 build, not a blockchain transaction.</p>
       </div>
 
       <div ref={wizardRef} className="scroll-mt-6 space-y-4">
