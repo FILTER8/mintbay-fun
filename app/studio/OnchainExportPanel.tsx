@@ -49,6 +49,7 @@ type RoyaltyMode = "none" | "erc2981" | "enforced";
 
 type OnchainSettings = {
   symbol: string;
+  pipelineTestMode: boolean;
   sourceHeaderArt: string;
   chainId: number;
   mintPriceEth: string;
@@ -82,6 +83,7 @@ type OnchainSettings = {
 
 const defaultSettings: OnchainSettings = {
   symbol: "",
+  pipelineTestMode: false,
   sourceHeaderArt: DEFAULT_CREATOR_MESSAGE,
   chainId: 4663,
   mintPriceEth: "0.001",
@@ -141,7 +143,39 @@ function sourceHeaderIssues(value: string): string[] {
   return issues;
 }
 
+// Local-EVM pipeline fixture. Explicitly disable every optional V6/V7 feature.
+// This does NOT change the user's normal saved settings when turning the mode off.
+function effectiveSettings(settings: OnchainSettings): OnchainSettings {
+  if (!settings.pipelineTestMode) return settings;
+  return {
+    ...settings,
+    sourceHeaderArt: "",
+    mintPriceEth: "0",
+    maxMintsPerWallet: 0,
+    creatorReserve: 0,
+    royaltyBps: 0,
+    royaltyMode: "none",
+    royaltyReceiver: "",
+    royaltySameAsDeployer: true,
+    standardRoyalties: false,
+    adminMode: "standard",
+    payoutSameAsDeployer: true,
+    transferableOwnership: false,
+    oneFreeMintPerHoodie: false,
+    burnForClaim: false,
+    creatorMintEnabled: false,
+    supplyReductionEnabled: false,
+    holderClaimEnabled: false,
+    holderSources: [],
+    claimsPerNft: 1,
+    burnClaimEnabled: false,
+    burnClaimCollection: "",
+    oneShotEnabled: false,
+  };
+}
+
 function buildConfig(project: ArtProject, settings: OnchainSettings) {
+  settings = effectiveSettings(settings);
   const hasRoyalties = settings.royaltyMode !== "none";
   const payoutRecipient = settings.payoutSameAsDeployer
     ? addressOrNull(settings.deployerAddress)
@@ -199,10 +233,16 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
       standardBurn: true,
       ownershipTransfer: { enabled: settings.transferableOwnership, twoStep: false },
     },
+    mintbayV7: {
+      transfersLocked: false,
+      tokenBoundClaimEnabled: false,
+      lockOwnershipTransfersImmediately: false,
+    },
     deployment: {
+      pipelineTestMode: settings.pipelineTestMode === true,
       verifySource: true,
       requireApprovalBeforeTransactions: true,
-      framework: "Mintbay V6 / external renderer and data shards (Bankr CREATE2)",
+      framework: settings.pipelineTestMode ? "Mintbay V7 PNG integration LOCAL EVM TEST ONLY" : "Mintbay V7 / external PNG renderer and data shards (Bankr CREATE2)",
       sourceArt: "collection/artwork.json",
       skillUrl: MINTBAY_SKILL_URL,
       adminMode: settings.adminMode,
@@ -225,11 +265,13 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
   };
 }
 
-function buildBankrDeployPrompt(buildUrl: string, chainId: number) {
+function buildBankrDeployPrompt(buildUrl: string, chainId: number, pipelineTestMode: boolean) {
   const buildId = buildUrl.split("/").filter(Boolean).pop() || buildUrl;
   const chain = SUPPORTED_CHAINS.find((item) => item.id === chainId);
   if (!chain) throw new Error(`Unsupported deployment chain: ${chainId}`);
-  return `@bankrbot deploy my Mintbay NFT collection on ${chain.name} (chain ID ${chain.id}).\nBuild ID: ${buildId}\nUse the official Mintbay skill.\nPrepare and validate the complete V6 dependency manifest and run local EVM tests. Do not broadcast until verified and I explicitly approve every transaction.`;
+  return pipelineTestMode
+    ? `@bankrbot LOCAL EVM TEST ONLY. For build ${buildId}, on a local EVM configured with chain ID ${chain.id}, fetch the latest FILTER8/mintbay-agent skill. Run generate-collection.mjs and prepare-deploy.mjs, locally deploy the PNG shard(s), renderer and V7 collection in manifest order, mint one token, decode tokenURI SVG and verify its PNG layer parity. Record source hashes, bytecode sizes, CREATE2 addresses and actual transaction gas. DO NOT broadcast to a public chain or change source files.`
+    : `@bankrbot prepare my Mintbay V7 collection on ${chain.name} (chain ID ${chain.id}). Build ID: ${buildId}. Use the official Mintbay skill. Verify all immutable hashes and run local EVM mint and tokenURI tests. Do not broadcast until verified and I explicitly approve each transaction.`;
 }
 
 export default function OnchainExportPanel({
@@ -291,6 +333,14 @@ export default function OnchainExportPanel({
     setPublishedUrl("");
   }
 
+  function activatePipelineTest() {
+    // In local test mode, only chain/owner/project remain configurable.
+    saveSettings({ ...settings, pipelineTestMode: true, chainId: 4663 });
+    setFeedback("V7 local pipeline test enabled. Only artwork, chain and owner affect the generated build; no optional features are enabled.");
+    setPublishedUrl("");
+    setStep(1);
+  }
+
   function useHoodieExample() {
     saveSettings({
       ...settings,
@@ -327,26 +377,27 @@ export default function OnchainExportPanel({
 
   const warnings = useMemo(() => {
     const issues: string[] = [];
-    if (!getSymbol(project.name, settings.symbol)) issues.push("Set a collection symbol.");
-    issues.push(...sourceHeaderIssues(settings.sourceHeaderArt));
-    if (!ETH_PRICE_PATTERN.test(settings.mintPriceEth)) issues.push("Mint price must be a non-negative native-token amount (ETH or POL) with at most 18 decimals.");
-    if (!SUPPORTED_CHAINS.some((chain) => chain.id === settings.chainId)) issues.push("Select a supported blockchain.");
-    if (settings.adminMode !== "standard") issues.push("Mintbay V6 currently supports standard owner addresses only; HoodWallet administration is not yet supported by the generator.");
-    if (!Number.isInteger(settings.maxMintsPerWallet) || settings.maxMintsPerWallet < 0) issues.push("Public wallet limit must be 0 (unlimited) or higher.");
-    if (settings.creatorMintEnabled && (!Number.isInteger(settings.creatorReserve) || settings.creatorReserve < 0 || settings.creatorReserve > project.supply)) issues.push("Creator allowance must be between 0 and total supply.");
-    if (settings.royaltyMode !== "none" && (!Number.isInteger(settings.royaltyBps) || settings.royaltyBps < 0 || settings.royaltyBps > 10000)) issues.push("Royalties must be between 0 and 10,000 basis points.");
-    if (settings.royaltyMode !== "none" && !ADDRESS_PATTERN.test((settings.royaltySameAsDeployer ? settings.deployerAddress : settings.royaltyReceiver).trim())) issues.push("Enter a valid royalty receiver or initial owner address.");
-    if (settings.adminMode === "hoodwallet" && !ADDRESS_PATTERN.test(settings.deployerAddress.trim())) issues.push("Enter the actual HoodWallet administrator address.");
-    if (!ADDRESS_PATTERN.test(settings.deployerAddress.trim())) issues.push("Enter a valid initial owner address (EOA or compatible multisig).");
-    if (settings.payoutSameAsDeployer) {
-      if (!ADDRESS_PATTERN.test(settings.deployerAddress.trim())) issues.push("Enter the initial owner wallet address for creator payout.");
-    } else if (!ADDRESS_PATTERN.test(settings.payoutRecipient.trim())) {
+    const effective = effectiveSettings(settings);
+    if (!getSymbol(project.name, effective.symbol)) issues.push("Set a collection symbol.");
+    issues.push(...sourceHeaderIssues(effective.sourceHeaderArt));
+    if (!ETH_PRICE_PATTERN.test(effective.mintPriceEth)) issues.push("Mint price must be a non-negative native-token amount (ETH or POL) with at most 18 decimals.");
+    if (!SUPPORTED_CHAINS.some((chain) => chain.id === effective.chainId)) issues.push("Select a supported blockchain.");
+    if (effective.adminMode !== "standard") issues.push("Mintbay V6 currently supports standard owner addresses only; HoodWallet administration is not yet supported by the generator.");
+    if (!Number.isInteger(effective.maxMintsPerWallet) || effective.maxMintsPerWallet < 0) issues.push("Public wallet limit must be 0 (unlimited) or higher.");
+    if (effective.creatorMintEnabled && (!Number.isInteger(effective.creatorReserve) || effective.creatorReserve < 0 || effective.creatorReserve > project.supply)) issues.push("Creator allowance must be between 0 and total supply.");
+    if (effective.royaltyMode !== "none" && (!Number.isInteger(effective.royaltyBps) || effective.royaltyBps < 0 || effective.royaltyBps > 10000)) issues.push("Royalties must be between 0 and 10,000 basis points.");
+    if (effective.royaltyMode !== "none" && !ADDRESS_PATTERN.test((effective.royaltySameAsDeployer ? effective.deployerAddress : effective.royaltyReceiver).trim())) issues.push("Enter a valid royalty receiver or initial owner address.");
+    if (effective.adminMode === "hoodwallet" && !ADDRESS_PATTERN.test(effective.deployerAddress.trim())) issues.push("Enter the actual HoodWallet administrator address.");
+    if (!ADDRESS_PATTERN.test(effective.deployerAddress.trim())) issues.push("Enter a valid initial owner address (EOA or compatible multisig).");
+    if (effective.payoutSameAsDeployer) {
+      if (!ADDRESS_PATTERN.test(effective.deployerAddress.trim())) issues.push("Enter the initial owner wallet address for creator payout.");
+    } else if (!ADDRESS_PATTERN.test(effective.payoutRecipient.trim())) {
       issues.push("Enter a valid creator payout address (EOA, multisig, or splitter).");
     }
-    if (settings.holderClaimEnabled && (!Array.isArray(settings.holderSources) || settings.holderSources.length < 1 || settings.holderSources.length > 5)) issues.push("Add 1–5 Holder Claim collections.");
-    if (settings.holderClaimEnabled && Array.isArray(settings.holderSources)) {
+    if (effective.holderClaimEnabled && (!Array.isArray(effective.holderSources) || effective.holderSources.length < 1 || effective.holderSources.length > 5)) issues.push("Add 1–5 Holder Claim collections.");
+    if (effective.holderClaimEnabled && Array.isArray(effective.holderSources)) {
       const unique = new Set<string>();
-      settings.holderSources.forEach((source, index) => {
+      effective.holderSources.forEach((source, index) => {
         if (!ADDRESS_PATTERN.test(source.contract.trim())) issues.push(`Holder Claim #${index + 1}: enter a valid NFT contract address.`);
         if (!ETH_PRICE_PATTERN.test(source.priceEth)) issues.push(`Holder Claim #${index + 1}: enter a valid mint price (0 = free).`);
         const key = source.contract.trim().toLowerCase();
@@ -354,8 +405,8 @@ export default function OnchainExportPanel({
         unique.add(key);
       });
     }
-    if (settings.holderClaimEnabled && (!Number.isSafeInteger(settings.claimsPerNft) || settings.claimsPerNft < 1)) issues.push("Claims per eligible NFT must be a positive whole number.");
-    if (settings.burnClaimEnabled && !ADDRESS_PATTERN.test(settings.burnClaimCollection.trim())) issues.push("Enter a valid Burn & Claim source collection address.");
+    if (effective.holderClaimEnabled && (!Number.isSafeInteger(effective.claimsPerNft) || effective.claimsPerNft < 1)) issues.push("Claims per eligible NFT must be a positive whole number.");
+    if (effective.burnClaimEnabled && !effective.pipelineTestMode && !ADDRESS_PATTERN.test(effective.burnClaimCollection.trim())) issues.push("Enter a valid Burn & Claim source collection address.");
     return issues;
   }, [project, settings]);
 
@@ -415,7 +466,7 @@ export default function OnchainExportPanel({
       if (typeof result.url !== "string") throw new Error("Build URL missing from API response");
       setPublishedUrl(result.url);
       setPublishPassword("");
-      setFeedback(`Build published with ${files.length} compressed PNG traits (${(totalBytes / 1024).toFixed(1)} KiB). Existing V6 deployments still use the legacy compiler until the universal renderer is ready.`);
+      setFeedback(`Build published with ${files.length} lossless PNG traits (${(totalBytes / 1024).toFixed(1)} KiB). ${settings.pipelineTestMode ? "V7 minimal test build: LOCAL EVM ONLY, no production deployment." : "Review all settings and run local V7 preflight before deployment."}`);
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : "Could not publish the build");
     } finally { setPublishing(false); }
@@ -424,8 +475,8 @@ export default function OnchainExportPanel({
   async function copyDeploymentPrompt() {
     if (!publishedUrl) { setFeedback("Publish a build first to obtain its immutable URL."); return; }
     try {
-      await navigator.clipboard.writeText(buildBankrDeployPrompt(publishedUrl, settings.chainId));
-      setFeedback("Copied V6 preflight prompt. Do not approve deployment until the local EVM checks pass.");
+      await navigator.clipboard.writeText(buildBankrDeployPrompt(publishedUrl, settings.chainId, settings.pipelineTestMode));
+      setFeedback(settings.pipelineTestMode ? "Copied V7 LOCAL EVM test prompt." : "Copied V7 preflight prompt. On-chain deployment still requires explicit approval.");
     } catch { setFeedback("Clipboard unavailable; deployment prompt could not be copied."); }
   }
 
@@ -447,6 +498,13 @@ export default function OnchainExportPanel({
         <p className="mt-3 border-l-4 border-current pl-3 opacity-80">Your artwork stays in your browser until you choose to publish the build. Publishing stores your editable JSON plus lossless compressed PNG layers in an immutable CC0 build, not a blockchain transaction.</p>
       </div>
 
+      <div className={`${panelClass} space-y-2`}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><strong className="uppercase">V7 PNG pipeline verification</strong><p className="text-sm opacity-70">Minimal public mint only. No claims, royalties, burning feature, transfer lock, TBA routing or optional features. For Bankr local EVM testing.</p></div>
+          <button type="button" className={buttonClass} onClick={() => settings.pipelineTestMode ? update("pipelineTestMode", false) : activatePipelineTest()}>{settings.pipelineTestMode ? "Exit test mode" : "Create clean test build"}</button>
+        </div>
+        {settings.pipelineTestMode && <p className="border-l-4 border-current pl-3 font-bold">TEST MODE ACTIVE: only project artwork, network and initial owner are used. The build contains PNG artwork and the V7 contract flags set to false. Publishing creates a new immutable build; it does not deploy.</p>}
+      </div>
       <div ref={wizardRef} className="scroll-mt-6 space-y-4">
         <div className="grid grid-cols-4 gap-2" aria-label="Collection setup steps">
           {(["MINT", "OWNER", "FEATURES", "PUBLISH"] as const).map((name, index) => {
@@ -474,40 +532,40 @@ export default function OnchainExportPanel({
               </select>
             </label>
             <label>Supply (from project)<input className={`${fieldClass} opacity-70`} type="number" value={project.supply} readOnly /></label>
-            <label>Public mint price ({settings.chainId === 137 ? "POL" : "ETH"}; 0 = free)<input className={fieldClass} inputMode="decimal" value={settings.mintPriceEth} onChange={(event) => update("mintPriceEth", event.target.value)} placeholder="0.001" /></label>
-            <label>Public mints per wallet (0 = unlimited)<input className={fieldClass} type="number" min={0} step={1} value={settings.maxMintsPerWallet} onChange={(event) => update("maxMintsPerWallet", Number(event.target.value))} /></label>
+            <label>Public mint price ({settings.chainId === 137 ? "POL" : "ETH"}; 0 = free)<input className={fieldClass} inputMode="decimal" value={settings.pipelineTestMode ? "0" : settings.mintPriceEth} disabled={settings.pipelineTestMode} onChange={(event) => update("mintPriceEth", event.target.value)} placeholder="0.001" /></label>
+            <label>Public mints per wallet (0 = unlimited)<input className={fieldClass} type="number" min={0} step={1} value={settings.pipelineTestMode ? 0 : settings.maxMintsPerWallet} disabled={settings.pipelineTestMode} onChange={(event) => update("maxMintsPerWallet", Number(event.target.value))} /></label>
           </div>
           <div className="space-y-2 border-t border-current pt-3">
             <label htmlFor="mintbay-source-header" className="block font-bold">Creator message / Unicode art (optional)</label>
             <p className="text-sm opacity-70">Adds a comment header to the future verified Solidity source. Not NFT artwork, metadata or on-chain storage. Supports Unicode block art and text. Maximum 4,096 UTF-8 bytes, 64 lines, 160 characters per line.</p>
             <p className="text-xs opacity-70">Edit or remove the framed message directly in the box below.</p>
-            <textarea id="mintbay-source-header" className={`${fieldClass} min-h-40 resize-y whitespace-pre overflow-x-auto`} value={settings.sourceHeaderArt} onChange={(event) => update("sourceHeaderArt", normalizeSourceHeaderArt(event.target.value))} placeholder="Your creator message (optional)" rows={6} spellCheck={false} wrap="off" />
+            <textarea id="mintbay-source-header" className={`${fieldClass} min-h-40 resize-y whitespace-pre overflow-x-auto`} value={settings.pipelineTestMode ? "" : settings.sourceHeaderArt} disabled={settings.pipelineTestMode} onChange={(event) => update("sourceHeaderArt", normalizeSourceHeaderArt(event.target.value))} placeholder="Your creator message (optional)" rows={6} spellCheck={false} wrap="off" />
             {settings.sourceHeaderArt && <details className="text-sm"><summary className="cursor-pointer font-bold">Preview Solidity comments</summary><pre className="mt-2 max-h-64 overflow-auto border border-current p-3 text-xs">{settings.sourceHeaderArt.split("\n").map(line => `// ${line}`).join("\n")}</pre></details>}
           </div>
-          <p className="opacity-70">0 mint price = free. 0 wallet limit = unlimited. Creator mints share the collection supply.</p>
+          <p className="opacity-70">{settings.pipelineTestMode ? "Test mode always uses free public mint and unlimited wallet allowance, regardless of the values above." : "0 mint price = free. 0 wallet limit = unlimited. Creator mints share the collection supply."}</p>
           <p className="border-l-4 border-current pl-3">Mintbay automatically receives 5% of each paid public mint or paid Holder Claim. The creator’s 95% remains withdrawable. Free mints have no protocol fee.</p>
         </div>}
 
         {step === 2 && <div className={`${panelClass} space-y-3`}>
           <h3 className="font-black uppercase">02 / Administrator & royalties</h3>
-          <label className="block">Net base contract
+          {!settings.pipelineTestMode && <label className="block">Net base contract
             <select value={settings.adminMode} className={fieldClass} onChange={(event) => update("adminMode", event.target.value as AdminMode)}>
               <option value="standard">Standard — final collection owner</option>
               <option value="hoodwallet" disabled>HoodWallet — not supported in V6</option>
             </select>
-          </label>
-          {settings.adminMode === "hoodwallet" ? (
+          </label>}
+          {settings.adminMode === "hoodwallet" && !settings.pipelineTestMode ? (
             <label className="block">HoodWallet administrator address<input className={fieldClass} value={settings.deployerAddress} onChange={(event) => update("deployerAddress", event.target.value)} placeholder="0x..." spellCheck={false} /></label>
           ) : (
             <label className="block">Initial collection owner (EOA / multisig)
               <input className={fieldClass} value={settings.deployerAddress} onChange={(event) => update("deployerAddress", event.target.value)} placeholder="0x..." spellCheck={false}/>
             </label>
           )}
-          <label className="flex items-center gap-2 font-bold">
+          {!settings.pipelineTestMode && <label className="flex items-center gap-2 font-bold">
             <input type="checkbox" checked={settings.payoutSameAsDeployer} onChange={(event) => update("payoutSameAsDeployer", event.target.checked)} />
             Creator payout: same as initial owner
-          </label>
-          {settings.payoutSameAsDeployer ? (
+          </label>}
+          {(settings.pipelineTestMode || settings.payoutSameAsDeployer) ? (
             <label className="block">Creator payout recipient
               <input className={`${fieldClass} opacity-70`} value={settings.deployerAddress} placeholder="Same as initial owner" readOnly />
             </label>
@@ -516,7 +574,7 @@ export default function OnchainExportPanel({
               <input className={fieldClass} value={settings.payoutRecipient} onChange={(event) => update("payoutRecipient", event.target.value)} placeholder="0x... EOA, multisig or split contract" spellCheck={false}/>
             </label>
           )}
-          <label className="block font-bold">Secondary royalties
+          {!settings.pipelineTestMode && <><label className="block font-bold">Secondary royalties
             <select className={fieldClass} value={settings.royaltyMode} onChange={(event) => {
               const royaltyMode = event.target.value as RoyaltyMode;
               saveSettings({ ...settings, royaltyMode, standardRoyalties: royaltyMode !== "none" });
@@ -540,12 +598,12 @@ export default function OnchainExportPanel({
             <p className="border-l-4 border-current pl-3 opacity-80">Requires the pinned V6 Limit Break transfer-validation implementation and a separate OpenSea activation step after deployment. Net Bazaar and other transfer routes may be incompatible until validation is disabled or configured. No validator is activated by publishing this draft.</p>
           )}
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.transferableOwnership} onChange={(event) => update("transferableOwnership", event.target.checked)} /> Transfer Ownership (optional)</label>
-          <p className="opacity-70">Direct ownership transfer. Payout and royalty addresses stay unchanged; the new owner can update them.</p>
+          <p className="opacity-70">Direct ownership transfer. Payout and royalty addresses stay unchanged; the new owner can update them.</p></>}
         </div>}
 
         {step === 3 && <div className={`${panelClass} space-y-3`}>
           <h3 className="font-black uppercase">03 / Optional features</h3>
-          <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.creatorMintEnabled} onChange={(e) => update("creatorMintEnabled", e.target.checked)}/> Creator Mint</label>
+          {settings.pipelineTestMode ? <p className="border-l-4 border-current pl-3">All optional features are disabled for this pipeline test. No Holder Claim, Burn & Claim, One Shot, creator allowance, royalties or TBA claims.</p> : <><label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.creatorMintEnabled} onChange={(e) => update("creatorMintEnabled", e.target.checked)}/> Creator Mint</label>
           {settings.creatorMintEnabled && <label>Free creator mint allowance<input className={fieldClass} type="number" min={0} max={project.supply} value={settings.creatorReserve} onChange={(e) => update("creatorReserve", Number(e.target.value))}/></label>}
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.supplyReductionEnabled} onChange={(e) => update("supplyReductionEnabled", e.target.checked)}/> Supply Reduction</label>
           <p className="opacity-70">If enabled, the creator can permanently lower maxSupply down to lifetime mints; no NFT is destroyed.</p>
@@ -576,7 +634,7 @@ export default function OnchainExportPanel({
           {settings.burnClaimEnabled && <div className="space-y-2 pl-4"><label className="block">Eligible burn-source ERC-721 contract<input className={fieldClass} value={settings.burnClaimCollection} onChange={(e) => update("burnClaimCollection", e.target.value)} placeholder="0x..." spellCheck={false}/></label><p className="text-sm opacity-70">Burn one approved source NFT to mint one new NFT for free. The collector must approve the new contract to burn their source token first. A source NFT is permanently destroyed; the entire action reverts if minting fails.</p></div>}
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.oneShotEnabled} onChange={(e) => update("oneShotEnabled", e.target.checked)}/> One Shot (Burn & Remint)</label>
           {settings.oneShotEnabled && <p className="pl-4 opacity-70">One free replacement per token lineage; requires unused lifetime supply. The replacement cannot be reminted again.</p>}
-          <p className="opacity-70">All mint routes share one first-come-first-served lifetime supply. Mintbay V6 tries up to ten seeds to avoid repeating a trait combination; duplicates are permitted if all attempts collide. Standard authorized NFT burn remains available.</p>
+          <p className="opacity-70">All mint routes share one first-come-first-served lifetime supply. Mintbay V6 tries up to ten seeds to avoid repeating a trait combination; duplicates are permitted if all attempts collide. Standard authorized NFT burn remains available.</p></>}
         </div>}
 
         {step === 4 && <div className={`${panelClass} space-y-3`}>
