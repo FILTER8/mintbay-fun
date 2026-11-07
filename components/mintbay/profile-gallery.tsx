@@ -129,6 +129,9 @@ function ProfileGalleryForAddress({ address }: { address: string }) {
     <div className="mb-profile-top">
       <span>{busy ? 'LOADING…' : `${items.length} ARTWORKS`}</span>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Link className="btn btn-lime" href={`/profile/${address.toLowerCase()}/gallery`}>
+          ENTER 3D GALLERY ↗
+        </Link>
         <button className="btn btn-outline" disabled={busy || !items.length || exporting} onClick={exportLatest}>
           {exporting ? 'PREPARING…' : 'EXPORT LATEST 16 ↗'}
         </button>
