@@ -59,8 +59,8 @@ function nftOf(o: unknown, contract?: string): NFT {
   acquiredAt:asText(at(o,'acquiredAt','blockTimestamp')) || asText(at(o,'mint','timestamp')) || asText(at(o,'timeLastUpdated')),
  };
 }
-const abi=parseAbi(['function ownerOf(uint256) view returns (address)','function tokenURI(uint256) view returns (string)','function price() view returns(uint256)','function maxSupply() view returns(uint256)','function totalSupply() view returns(uint256)']);
-export async function rpcCall(address: string, functionName: 'ownerOf' | 'tokenURI' | 'price' | 'maxSupply' | 'totalSupply', args: bigint[] = [], chain=4663): Promise<string | bigint> {
+const abi=parseAbi(['function ownerOf(uint256) view returns (address)','function tokenURI(uint256) view returns (string)','function price() view returns(uint256)','function maxSupply() view returns(uint256)','function totalSupply() view returns(uint256)','function totalMinted() view returns(uint256)']);
+export async function rpcCall(address: string, functionName: 'ownerOf' | 'tokenURI' | 'price' | 'maxSupply' | 'totalSupply' | 'totalMinted', args: bigint[] = [], chain=4663): Promise<string | bigint> {
  const key = process.env.ALCHEMY_API_KEY;
  const url = key && hosts[chain] ? `https://${hosts[chain]}.g.alchemy.com/v2/${key}` : publicRpc[chain];
  if (!url) throw Error('Configure ALCHEMY_API_KEY or ROBINHOOD_RPC_URL');
@@ -69,6 +69,7 @@ export async function rpcCall(address: string, functionName: 'ownerOf' | 'tokenU
   : functionName === 'tokenURI' ? encodeFunctionData({abi,functionName:'tokenURI',args:[arg]})
   : functionName === 'price' ? encodeFunctionData({abi,functionName:'price'})
   : functionName === 'maxSupply' ? encodeFunctionData({abi,functionName:'maxSupply'})
+  : functionName === 'totalMinted' ? encodeFunctionData({abi,functionName:'totalMinted'})
   : encodeFunctionData({abi,functionName:'totalSupply'});
  const response = await fetch(url,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_call',params:[{to:address,data},'latest']}),cache:'no-store'});
  const body: unknown = await response.json();
@@ -79,14 +80,23 @@ export async function rpcCall(address: string, functionName: 'ownerOf' | 'tokenU
  if (functionName === 'tokenURI') return decodeFunctionResult({abi,functionName:'tokenURI',data:hex});
  if (functionName === 'price') return decodeFunctionResult({abi,functionName:'price',data:hex});
  if (functionName === 'maxSupply') return decodeFunctionResult({abi,functionName:'maxSupply',data:hex});
+ if (functionName === 'totalMinted') return decodeFunctionResult({abi,functionName:'totalMinted',data:hex});
  return decodeFunctionResult({abi,functionName:'totalSupply',data:hex});
 }
 function decodeTokenUri(uri: string): JsonMap | null {
  try {
-  if (uri.startsWith('data:application/json;base64,')) return asObj(JSON.parse(Buffer.from(uri.split(',')[1], 'base64').toString('utf8')));
-  if (uri.startsWith('data:application/json,')) return asObj(JSON.parse(decodeURIComponent(uri.slice(uri.indexOf(',')+1))));
- } catch { /* Unsupported or malformed metadata */ }
- return null;
+  // Fully on-chain collections may use base64, URL-encoded JSON, or an
+  // explicit UTF-8 data URI. Never fetch arbitrary metadata URLs here.
+  const separator = uri.indexOf(',');
+  if (separator < 0) return null;
+  const header = uri.slice(0,separator).toLowerCase();
+  if (!header.startsWith('data:application/json')) return null;
+  const encoded = uri.slice(separator+1);
+  const json = header.endsWith(';base64')
+   ? Buffer.from(encoded,'base64').toString('utf8')
+   : decodeURIComponent(encoded);
+  return asObj(JSON.parse(json));
+ } catch { return null; }
 }
 // For a token page, the contract's tokenURI is the canonical artwork source.
 // Alchemy is still used for fast NFT discovery and metadata fallback.
@@ -118,33 +128,126 @@ const cachedTokenMetadata = unstable_cache(
  { revalidate: 300 }
 );
 
-export async function collectionTokens(address:string,startToken='0',limit=24,fresh=false,chain=4663):Promise<{tokens:NFT[];next:string|null}>{
- const data=await alchemy('getNFTsForCollection',{contractAddress:address,withMetadata:'true',startToken,limit:String(limit)},chain,fresh);
- const items=asArray(at(data,'nfts'));
- // A token might still be present in Alchemy metadata after a burn. Verify ownerOf.
- // This page is limited to 24 items, and checks run concurrently with a cap.
- const filtered:NFT[]=[];
- for(let i=0;i<items.length;i+=6){
-  const batch=await Promise.all(items.slice(i,i+6).map(async(o:unknown)=>{
-   const n=nftOf(o,address);
-   try{
-    n.owner=String(await rpcCall(address,'ownerOf',[BigInt(n.tokenId)],chain));
-    // Always prefer the immutable on-chain SVG rather than an Alchemy thumbnail.
-    // Two bounded RPC reads per visible token, not a continuous indexer scan.
-    try{
-     const raw=await cachedTokenMetadata(address,n.tokenId,chain);
-     if(typeof raw?.image==='string' && (/^data:image\//.test(raw.image)||/^https:\/\//.test(raw.image)))n.image=raw.image;
-     if(typeof raw?.name==='string')n.name=raw.name;
-      if(typeof raw?.animation_url==='string')n.animationUrl=raw.animation_url;
-     if(Array.isArray(raw?.attributes))n.attributes=attributesOf(raw.attributes);
-    }catch{/* keep raw Alchemy metadata as fallback */}
-    return n;
-   }catch{return null;} // Exclude burned and unminted NFTs
-  }));
-  for(const v of batch)if(v)filtered.push(v);
- }
- return {tokens:filtered,next:asText(at(data,'nextToken')) ?? null};
+// The canonical Mintbay ERC721A contracts assign sequential IDs and expose the
+// lifetime mint count. Read their newest tokens straight from the chain: a mint
+// appears after confirmation even when the Alchemy NFT index has not caught up.
+// For older contracts without totalMinted(), use the Alchemy Transfers API,
+// ordered newest-first (rather than the NFT API's oldest-first startToken=0).
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const MINT_PAGE_SIZE = 24;
+const MINT_SCAN_LIMIT = 96; // bounded work for collections with burned tokens
+
+async function verifiedOnChainToken(address: string, id: string, chain: number): Promise<NFT | null> {
+ try {
+  const owner = String(await rpcCall(address, 'ownerOf', [BigInt(id)], chain));
+  const item: NFT = {
+   contract: address.toLowerCase(), tokenId: id, name: `#${id}`,
+   image: null, animationUrl: null, attributes: [], owner, chainId: chain,
+  };
+  try {
+   const raw = await cachedTokenMetadata(address, id, chain);
+   if (typeof raw?.image === 'string' && (/^data:image\//.test(raw.image) || /^https:\/\//.test(raw.image))) item.image = raw.image;
+   if (typeof raw?.name === 'string') item.name = raw.name;
+   if (typeof raw?.animation_url === 'string') item.animationUrl = raw.animation_url;
+   if (Array.isArray(raw?.attributes)) item.attributes = attributesOf(raw.attributes);
+  } catch { /* Some older contracts use metadata URLs instead of data URIs. */ }
+  if (!item.image) {
+   try {
+    const indexed = nftOf(await alchemy('getNFTMetadata', {contractAddress: address, tokenId: id, tokenType: 'ERC721'}, chain), address);
+    item.image = indexed.image;
+    if (item.name === `#${id}`) item.name = indexed.name;
+    if (!item.animationUrl) item.animationUrl = indexed.animationUrl;
+    if (!item.attributes.length) item.attributes = indexed.attributes;
+   } catch { /* Keep a correct token ID/owner if the indexer is behind. */ }
+  }
+  return item;
+ } catch { return null; } // Burned, unminted or nonexistent token.
 }
+
+type MintPage = { tokens: NFT[]; next: string | null };
+
+async function sequentialMintPage(address: string, firstId: bigint, minted: bigint, cursor: string, limit: number, chain: number): Promise<MintPage> {
+ let index = cursor.startsWith('n:') ? BigInt(cursor.slice(2)) : minted - BigInt(1);
+ // Do not reveal a caller-supplied position beyond the actual on-chain count.
+ if (index >= minted) index = minted - BigInt(1);
+ const tokens: NFT[] = [];
+ let scanned = 0;
+ while (index >= BigInt(0) && tokens.length < limit && scanned < MINT_SCAN_LIMIT) {
+  const remaining = Math.min(6, limit - tokens.length, MINT_SCAN_LIMIT - scanned, Number(index + BigInt(1)));
+  const ids = Array.from({length: remaining}, (_, i) => (firstId + index - BigInt(i)).toString());
+  const batch = await Promise.all(ids.map(id => verifiedOnChainToken(address, id, chain)));
+  for (const token of batch) if (token) tokens.push(token);
+  scanned += remaining;
+  index -= BigInt(remaining);
+ }
+ return {tokens, next: index >= BigInt(0) ? `n:${index}` : null};
+}
+
+function parseMintTokenId(value: unknown): string | null {
+ if (typeof value !== 'string' || !/^(0x[0-9a-fA-F]+|[0-9]+)$/.test(value)) return null;
+ try { return BigInt(value).toString(); } catch { return null; }
+}
+
+async function legacyMintPage(address: string, cursor: string, limit: number, chain: number): Promise<MintPage> {
+ const key = process.env.ALCHEMY_API_KEY;
+ const host = hosts[chain];
+ if (!key || !host) throw Error('Alchemy mint history is unavailable for this legacy collection.');
+ const params: Record<string, unknown> = {
+  fromAddress: ZERO_ADDRESS, contractAddresses: [address], category: ['erc721'],
+  order: 'desc', excludeZeroValue: false, withMetadata: false,
+  maxCount: `0x${limit.toString(16)}`,
+ };
+ if (cursor.startsWith('a:')) params.pageKey = cursor.slice(2);
+ const response = await fetch(`https://${host}.g.alchemy.com/v2/${key}`, {
+  method: 'POST', headers: {'content-type':'application/json'},
+  body: JSON.stringify({jsonrpc:'2.0',id:1,method:'alchemy_getAssetTransfers',params:[params]}),
+  cache:'no-store',signal:AbortSignal.timeout(12000),
+ });
+ const payload: unknown = await response.json();
+ const result = at(payload, 'result');
+ const transfers = at(result, 'transfers');
+ if (!response.ok || at(payload, 'error') || !Array.isArray(transfers)) {
+  throw Error('Unable to retrieve the latest on-chain mints from Alchemy.');
+ }
+ const ids = [...new Set(transfers.map(t => parseMintTokenId(at(t, 'erc721TokenId') ?? at(t, 'tokenId'))).filter((v): v is string => v !== null))];
+ const tokenResults: (NFT | null)[] = [];
+ for (let i = 0; i < ids.length; i += 6) {
+  tokenResults.push(...await Promise.all(ids.slice(i,i+6).map(id => verifiedOnChainToken(address, id, chain))));
+ }
+ const pageKey = at(result, 'pageKey');
+ return {
+  tokens: tokenResults.filter((t): t is NFT => t !== null),
+  next: typeof pageKey === 'string' && pageKey ? `a:${pageKey}` : null,
+ };
+}
+
+export async function collectionTokens(address: string, cursor='0', limit=MINT_PAGE_SIZE, _fresh=false, chain=4663): Promise<MintPage> {
+ if (!ADDRESS.test(address) || !supportedChains.some(c => c.id === chain)) throw Error('Invalid collection or chain');
+ // Cursors are intentionally tied to their source; a legacy page cannot be
+ // mistaken for a sequential on-chain page when index support changes.
+ if (cursor.startsWith('a:')) return legacyMintPage(address,cursor,limit,chain);
+ const isSequential = cursor.startsWith('n:');
+ let lifetime: bigint | null = null;
+ if (!cursor || cursor === '0' || isSequential) {
+  try {
+   const [count, circulating] = await Promise.all([
+    rpcCall(address, 'totalMinted', [], chain),
+    rpcCall(address, 'totalSupply', [], chain).catch(() => null),
+   ]);
+   // Do not trust a counter that disagrees with circulating ownership.
+   if (circulating === null || BigInt(count) >= BigInt(circulating)) lifetime = BigInt(count);
+  } catch { /* Old contract */ }
+ }
+ if (lifetime !== null) {
+  const c = await collection(address, chain);
+  const configuredStart = c?.firstMintTokenId;
+  const firstId = configuredStart && /^(0x[0-9a-fA-F]+|\d+)$/.test(configuredStart) ? BigInt(configuredStart) : BigInt(0);
+  return sequentialMintPage(address, firstId, lifetime, cursor, limit, chain);
+ }
+ if (isSequential) throw Error('Lifetime mint counter unavailable. Refresh the gallery.');
+ return legacyMintPage(address,cursor,limit,chain);
+}
+
 // Explicitly read every page before claiming a latest-16 export. Errors propagate, never silently truncate.
 export async function ownerTokens(owner:string):Promise<NFT[]>{
  const registered=await collections();const contracts=registered.map(c=>({address:c.contractAddress,chain:c.chainId}));
@@ -201,3 +304,32 @@ async function checkMintStatus(address:string,chain=4663):Promise<'minted_out'|'
  }catch{return 'unknown'}
 }
 export async function mintStatus(address:string,chain=4663){return unstable_cache(()=>checkMintStatus(address,chain),['mint-status-v53',String(chain),address.toLowerCase()],{revalidate:21600})()}
+
+// Truthful collection-grid badges. Prefer the lifetime on-chain counter; for
+// legacy collections, confirm exhaustion via circulating supply or a simulated
+// mint, never via an unreliable current owner count alone.
+export type CollectionMintSummary = { soldOut: boolean; minted: number | null; maxSupply: number };
+export async function collectionMintSummary(entry: Collection): Promise<CollectionMintSummary> {
+ const address = entry.contractAddress;
+ const chain = entry.chainId;
+ return unstable_cache(async (): Promise<CollectionMintSummary> => {
+  const [maxResult, lifetimeResult, circulatingResult] = await Promise.allSettled([
+   rpcCall(address,'maxSupply',[],chain),
+   rpcCall(address,'totalMinted',[],chain),
+   rpcCall(address,'totalSupply',[],chain),
+  ]);
+  const max = maxResult.status === 'fulfilled' ? BigInt(maxResult.value) : null;
+  const cap = max === null || max > BigInt(Number.MAX_SAFE_INTEGER) ? entry.maxSupply : Number(max);
+  if (max === null || max <= BigInt(0)) return {soldOut:false,minted:null,maxSupply:cap};
+  if (lifetimeResult.status === 'fulfilled') {
+   const lifetime = BigInt(lifetimeResult.value);
+   if (circulatingResult.status !== 'fulfilled' || lifetime >= BigInt(circulatingResult.value)) {
+    return {soldOut:lifetime >= max,minted:lifetime <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(lifetime) : null,maxSupply:cap};
+   }
+  }
+  if (circulatingResult.status === 'fulfilled' && BigInt(circulatingResult.value) >= max) {
+   return {soldOut:true,minted:null,maxSupply:cap};
+  }
+  return {soldOut:await checkMintStatus(address,chain) === 'minted_out',minted:null,maxSupply:cap};
+ }, ['mintbay-grid-supply-v1',String(chain),address.toLowerCase()], {revalidate:60})();
+}

@@ -72,8 +72,12 @@ async function encodeExactPng(width: number, height: number, colors: string[]): 
   if (typeof CompressionStream === 'undefined') {
     throw new Error('This browser does not support CompressionStream(deflate), required for exact-color PNG encoding');
   }
+  // BlobPart must use a guaranteed ArrayBuffer (not ArrayBufferLike).
+  // TypeScript's newer typed-array definitions otherwise allow SharedArrayBuffer.
+  const scanlineBuffer = new ArrayBuffer(scanlines.byteLength);
+  new Uint8Array(scanlineBuffer).set(scanlines);
   const compressed = await new Response(
-    new Blob([scanlines]).stream().pipeThrough(new CompressionStream('deflate'))
+    new Blob([scanlineBuffer]).stream().pipeThrough(new CompressionStream('deflate'))
   ).arrayBuffer();
   const ihdr = new Uint8Array(13);
   ihdr.set(u32(width), 0);
@@ -82,9 +86,17 @@ async function encodeExactPng(width: number, height: number, colors: string[]): 
   ihdr[9] = 6; // RGBA truecolor with alpha
   // Compression, filter, interlace are all zero.
   const signature = new Uint8Array([137,80,78,71,13,10,26,10]);
-  return new Blob([signature, pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', new Uint8Array(compressed)), pngChunk('IEND', new Uint8Array())],
-    { type: 'image/png' });
+  // Assemble into a real ArrayBuffer for strict DOM BlobPart typing.
+  const parts = [signature, pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', new Uint8Array(compressed)), pngChunk('IEND', new Uint8Array())];
+  const output = new ArrayBuffer(parts.reduce((sum, part) => sum + part.byteLength, 0));
+  const bytes = new Uint8Array(output);
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.byteLength;
+  }
+  return new Blob([output], { type: 'image/png' });
 }
 /** Canonicalize Studio colors without mutating the editable project.
  * The existing Studio PNG import writes rgb(r, g, b), while V6 accepts #RRGGBB.
