@@ -26,8 +26,65 @@ export type PngManifest = {
 function hex(data: ArrayBuffer): string {
   return Array.from(new Uint8Array(data), b => b.toString(16).padStart(2, '0')).join('');
 }
-function pngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error('PNG encoding failed')), 'image/png'));
+/** Encode the canonical pixel RGB bytes directly into PNG (RGBA8).
+ * Avoid HTMLCanvasElement.toBlob(), which may color-convert pixel values.
+ * CompressionStream('deflate') produces the PNG IDAT zlib stream.
+ */
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+function u32(value: number): Uint8Array {
+  return new Uint8Array([(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255]);
+}
+function pngChunk(name: string, contents: Uint8Array): Uint8Array {
+  const nameBytes = new TextEncoder().encode(name);
+  const crcInput = new Uint8Array(4 + contents.length);
+  crcInput.set(nameBytes);
+  crcInput.set(contents, 4);
+  const chunk = new Uint8Array(12 + contents.length);
+  chunk.set(u32(contents.length));
+  chunk.set(crcInput, 4);
+  chunk.set(u32(crc32(crcInput)), contents.length + 8);
+  return chunk;
+}
+async function encodeExactPng(width: number, height: number, colors: string[]): Promise<Blob> {
+  // PNG row filter type 0: all RGBA channels are stored exactly as specified.
+  const scanlines = new Uint8Array(height * (1 + 4 * width));
+  const stride = 1 + 4 * width;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const color = colors[y * width + x];
+      const p = y * stride + 1 + x * 4;
+      if (color === 'transparent') continue;
+      scanlines[p] = parseInt(color.slice(1, 3), 16);
+      scanlines[p + 1] = parseInt(color.slice(3, 5), 16);
+      scanlines[p + 2] = parseInt(color.slice(5, 7), 16);
+      scanlines[p + 3] = 255;
+    }
+  }
+  if (typeof CompressionStream === 'undefined') {
+    throw new Error('This browser does not support CompressionStream(deflate), required for exact-color PNG encoding');
+  }
+  const compressed = await new Response(
+    new Blob([scanlines]).stream().pipeThrough(new CompressionStream('deflate'))
+  ).arrayBuffer();
+  const ihdr = new Uint8Array(13);
+  ihdr.set(u32(width), 0);
+  ihdr.set(u32(height), 4);
+  ihdr[8] = 8; // Bit depth 8
+  ihdr[9] = 6; // RGBA truecolor with alpha
+  // Compression, filter, interlace are all zero.
+  const signature = new Uint8Array([137,80,78,71,13,10,26,10]);
+  return new Blob([signature, pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', new Uint8Array(compressed)), pngChunk('IEND', new Uint8Array())],
+    { type: 'image/png' });
 }
 /** Canonicalize Studio colors without mutating the editable project.
  * The existing Studio PNG import writes rgb(r, g, b), while V6 accepts #RRGGBB.
@@ -81,21 +138,13 @@ export async function compilePngAssets(project: PngProject): Promise<{ manifest:
     for (let ti = 0; ti < layer.traits.length; ti++) {
       const trait = layer.traits[ti];
       if (trait.pixels.length !== n * n) throw new Error(`Wrong pixel count in ${layer.name} / ${trait.name}`);
-      const canvas = document.createElement('canvas');
-      canvas.width = n;
-      canvas.height = n;
-      const ctx = canvas.getContext('2d', { willReadFrequently: false });
-      if (!ctx) throw new Error('Canvas is unavailable');
-      ctx.imageSmoothingEnabled = false;
-      ctx.clearRect(0, 0, n, n);
       for (let p = 0; p < trait.pixels.length; p++) {
         const color = trait.pixels[p];
-        if (color === 'transparent') continue;
-        if (!/^#[0-9a-f]{6}$/i.test(color)) throw new Error(`Invalid pixel color in ${layer.name} / ${trait.name} at pixel ${p}: ${color}`);
-        ctx.fillStyle = color;
-        ctx.fillRect(p % n, Math.floor(p / n), 1, 1);
+        if (color !== 'transparent' && !/^#[0-9a-f]{6}$/i.test(color)) {
+          throw new Error(`Invalid pixel color in ${layer.name} / ${trait.name} at pixel ${p}: ${color}`);
+        }
       }
-      const blob = await pngBlob(canvas);
+      const blob = await encodeExactPng(n, n, trait.pixels);
       const data = await blob.arrayBuffer();
       const index = records.length;
       const path = `assets/${String(index).padStart(6, '0')}.png`;
