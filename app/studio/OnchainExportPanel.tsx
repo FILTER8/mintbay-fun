@@ -29,6 +29,8 @@ const SUPPORTED_CHAINS = [
   { id: 130, name: "Unichain" },
   { id: 42161, name: "Arbitrum One" },
 ] as const;
+type TbaConfig = { registry: string; implementation: string; salt: string; accountChainId: number };
+type DirectoryEntry = TbaConfig & { chainId: number; collection: string; name: string; walletName: string };
 type HolderSource = { contract: string; priceEth: string }; // priceEth field retained for API compatibility; units are the network native token
 const defaultHoodieSource = (): HolderSource => ({ contract: DEFAULT_HOODIE_CONTRACT, priceEth: "0" });
 
@@ -146,7 +148,14 @@ function sourceHeaderIssues(value: string): string[] {
   return issues;
 }
 
-function buildConfig(project: ArtProject, settings: OnchainSettings) {
+function matchedTba(source: HolderSource, chainId: number, directory: DirectoryEntry[]): TbaConfig | null {
+  const entry = directory.find(item => item.chainId === chainId && item.accountChainId === chainId
+    && item.collection.toLowerCase() === source.contract.trim().toLowerCase());
+  return entry ? { registry: entry.registry, implementation: entry.implementation,
+    salt: entry.salt, accountChainId: entry.accountChainId } : null;
+}
+
+function buildConfig(project: ArtProject, settings: OnchainSettings, directory: DirectoryEntry[] = []) {
   const hasRoyalties = !settings.transfersLocked && settings.royaltyMode !== "none";
   const payoutRecipient = settings.payoutSameAsDeployer
     ? addressOrNull(settings.deployerAddress)
@@ -155,6 +164,11 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
     ? addressOrNull(settings.deployerAddress)
     : addressOrNull(settings.royaltyReceiver);
   const holderSources = settings.holderClaimEnabled && Array.isArray(settings.holderSources) ? settings.holderSources : [];
+  const tbaConfigs = settings.tokenBoundClaimEnabled && settings.holderClaimEnabled
+    ? holderSources.map(source => ({ sourceCollection: source.contract.trim(), config: matchedTba(source, settings.chainId, directory) }))
+      .filter((entry): entry is { sourceCollection: string; config: TbaConfig } => entry.config !== null)
+      .map(entry => ({ sourceCollection: entry.sourceCollection, ...entry.config }))
+    : [];
   return {
     collection: {
       name: project.name,
@@ -208,6 +222,7 @@ function buildConfig(project: ArtProject, settings: OnchainSettings) {
       transfersLocked: settings.transfersLocked,
       tokenBoundClaimEnabled: settings.holderClaimEnabled && settings.tokenBoundClaimEnabled,
       lockOwnershipTransfersImmediately: settings.lockOwnershipImmediately || !settings.transferableOwnership,
+      tbaConfigs,
     },
     deployment: {
       verifySource: true,
@@ -241,7 +256,7 @@ function buildBankrDeployPrompt(buildUrl: string, chainId: number) {
   const buildId = buildUrl.split("/").filter(Boolean).pop() || buildUrl;
   const chain = SUPPORTED_CHAINS.find((item) => item.id === chainId);
   if (!chain) throw new Error(`Unsupported deployment chain: ${chainId}`);
-  return `@bankrbot deploy my Mintbay NFT collection on ${chain.name} (chain ID ${chain.id}).\nBuild ID: ${buildId}\nUse the official Mintbay skill.\nPrepare and validate the complete V7 dependency manifest and run local EVM tests. Do not broadcast until verified and I explicitly approve every transaction.`;
+  return `@bankrbot deploy my Mintbay NFT collection on ${chain.name} (chain ID ${chain.id}).\nBuild ID: ${buildId}\nUse the official Mintbay skill.\nPrepare and validate the complete V7 dependency manifest and run local EVM tests. If mintbayV7.tbaConfigs has entries, prepare the corresponding setClaimTBAConfig(sourceCollection,registry,implementation,salt,accountChainId) owner transactions after deployment, and verify recipient addresses before approvals. Do not broadcast until verified and I explicitly approve every transaction.`;
 }
 
 export default function OnchainExportPanel({
@@ -252,6 +267,9 @@ export default function OnchainExportPanel({
   isDark: boolean;
 }) {
   const [settings, setSettings] = useState<OnchainSettings>(defaultSettings);
+  const [tbaDirectory, setTbaDirectory] = useState<DirectoryEntry[]>([]);
+  const [directoryNotice, setDirectoryNotice] = useState("");
+  const [directoryLoaded, setDirectoryLoaded] = useState(false);
   const [step, setStep] = useState(1);
   const wizardRef = useRef<HTMLDivElement | null>(null);
   const checksRef = useRef<HTMLDivElement | null>(null);
@@ -282,7 +300,7 @@ export default function OnchainExportPanel({
             tokenBoundClaimEnabled: parsed.holderClaimEnabled === false ? false : (parsed.tokenBoundClaimEnabled ?? false),
             sourceHeaderArt: replaceOldSampleArt(parsed.sourceHeaderArt),
             holderSources: Array.isArray(parsed.holderSources) && parsed.holderSources.length
-              ? parsed.holderSources.slice(0, 5)
+              ? parsed.holderSources.slice(0, 5).map(source => ({ contract: source.contract, priceEth: source.priceEth }))
               : (parsed.chainId === 4663 || parsed.chainId == null ? [defaultHoodieSource()] : []),
             royaltySameAsDeployer: parsed.royaltySameAsDeployer ?? false,
           });
@@ -293,6 +311,21 @@ export default function OnchainExportPanel({
     });
     return () => window.cancelAnimationFrame(frame);
   }, []);
+
+  useEffect(() => {
+    if (!settings.holderClaimEnabled || !settings.tokenBoundClaimEnabled) return;
+    const controller = new AbortController();
+    fetch(`${API_BASE_URL}/v1/tba/collections`, { signal: controller.signal, cache: 'no-store' })
+      .then(async response => { if (!response.ok) throw new Error('TBA directory unavailable'); return response.json(); })
+      .then(data => {
+        if (controller.signal.aborted) return;
+        setTbaDirectory(Array.isArray(data.collections) ? data.collections : []);
+        setDirectoryNotice("");
+        setDirectoryLoaded(true);
+      })
+      .catch(() => { if (!controller.signal.aborted) {setTbaDirectory([]); setDirectoryLoaded(false); setDirectoryNotice('Mintbay TBA directory unavailable. Please retry before publishing TBA claims.');} });
+    return () => controller.abort();
+  }, [settings.holderClaimEnabled, settings.tokenBoundClaimEnabled]);
 
   function saveSettings(next: OnchainSettings) {
     setSettings(next);
@@ -349,10 +382,24 @@ export default function OnchainExportPanel({
     }
     if (settings.tokenBoundClaimEnabled && !settings.holderClaimEnabled) issues.push("ERC-6551 claims require Holder Claim.");
     if (settings.transfersLocked && (settings.burnClaimEnabled || settings.oneShotEnabled || settings.royaltyMode !== "none")) issues.push("Non-transferable NFTs require no royalties, Burn & Claim or One Shot.");
+    if (settings.holderClaimEnabled && settings.tokenBoundClaimEnabled) {
+      if (!directoryLoaded) issues.push('ERC-6551 directory must load before publishing.');
+      const configured = settings.holderSources.filter(source => {
+        const tba = matchedTba(source, settings.chainId, tbaDirectory);
+        return tba && ADDRESS_PATTERN.test(tba.registry) && ADDRESS_PATTERN.test(tba.implementation)
+          && /^0x[0-9a-fA-F]{64}$/.test(tba.salt) && tba.accountChainId === settings.chainId;
+      });
+      if (!configured.length) issues.push('ERC-6551 Holder Claim requires at least one Mintbay-supported source collection.');
+      for (const source of settings.holderSources) {
+        const tba = matchedTba(source, settings.chainId, tbaDirectory);
+        if (tba && (!ADDRESS_PATTERN.test(tba.registry) || !ADDRESS_PATTERN.test(tba.implementation) || !/^0x[0-9a-fA-F]{64}$/.test(tba.salt) || tba.accountChainId !== settings.chainId))
+          issues.push(`Invalid ERC-6551 configuration for ${source.contract || 'eligible collection'}.`);
+      }
+    }
     if (settings.holderClaimEnabled && (!Number.isSafeInteger(settings.claimsPerNft) || settings.claimsPerNft < 1)) issues.push("Claims per eligible NFT must be a positive whole number.");
     if (!settings.transfersLocked && settings.burnClaimEnabled && !ADDRESS_PATTERN.test(settings.burnClaimCollection.trim())) issues.push("Enter a valid Burn & Claim source collection address.");
     return issues;
-  }, [project, settings]);
+  }, [project, settings, tbaDirectory, directoryLoaded]);
 
   // Advisory notices never block exporting or publishing a draft.
   const notices = useMemo(() => {
@@ -363,7 +410,7 @@ export default function OnchainExportPanel({
     return items;
   }, [project]);
 
-  const proposedConfig = useMemo(() => buildConfig(project, settings), [project, settings]);
+  const proposedConfig = useMemo(() => buildConfig(project, settings, tbaDirectory), [project, settings, tbaDirectory]);
 
   function goStep(next: number) {
     setStep(Math.max(1, Math.min(4, next)));
@@ -373,7 +420,7 @@ export default function OnchainExportPanel({
   function errorStep(message: string): number {
     if (/symbol|mint price|chain|wallet limit|creator message/i.test(message)) return 1;
     if (/royalt|receiver|owner|deployer|payout|administrator|admin|ownership/i.test(message)) return 2;
-    if (/holder claim|burn & claim|burn-source|eligible|claims per|creator allowance/i.test(message)) return 3;
+    if (/holder claim|burn & claim|burn-source|eligible|claims per|creator allowance|erc-6551/i.test(message)) return 3;
     return 1;
   }
 
@@ -537,7 +584,11 @@ export default function OnchainExportPanel({
           <p className="opacity-70">If enabled, the creator can permanently lower maxSupply down to lifetime mints; no NFT is destroyed.</p>
           <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={settings.holderClaimEnabled} onChange={(e) => update("holderClaimEnabled", e.target.checked)}/> Holder Claim</label>
            {settings.holderClaimEnabled && <><label className="flex items-center gap-2 font-bold pl-4"><input type="checkbox" checked={settings.tokenBoundClaimEnabled} onChange={(e) => update("tokenBoundClaimEnabled", e.target.checked)}/> Enable ERC-6551 claims into token-bound accounts</label>
-             {settings.tokenBoundClaimEnabled && <p className="pl-4 text-sm opacity-70">Independent of non-transferability. NFT owners can claim into their parent NFT's TBA. After deployment the collection owner must set each eligible collection's registry, account implementation, salt and chain ID using setClaimTBAConfig. Normal Holder Claims still mint to the caller.</p>}</>}
+             {settings.tokenBoundClaimEnabled && <div className="pl-4 space-y-2 text-sm opacity-70">
+               <p>Independent of non-transferability. Eligible holders may choose regular Holder Claim or claim into a configured ERC-6551 wallet.</p>
+               <p>Registered ERC-6551 configurations load automatically. Bankr must apply each setClaimTBAConfig transaction with owner approval after deployment.</p>
+               {directoryNotice && <p role="status">{directoryNotice}</p>}
+             </div>}</>}
           {settings.holderClaimEnabled && (
             <div className="space-y-3 pl-4">
               {settings.holderSources.map((source, index) => (
@@ -546,11 +597,29 @@ export default function OnchainExportPanel({
                     {settings.holderSources.length > 1 && <button type="button" className="underline" onClick={() => update("holderSources", settings.holderSources.filter((_, i) => i !== index))}>Remove</button>}
                   </div>
                   <label className="block">ERC-721 contract address
-                    <input className={fieldClass} value={source.contract} onChange={(e) => update("holderSources", settings.holderSources.map((item, i) => i === index ? { ...item, contract: e.target.value } : item))} placeholder="0x..." spellCheck={false}/>
+                    <input className={fieldClass} value={source.contract} onChange={(e) => update("holderSources", settings.holderSources.map((item, i) => i === index ? {contract: e.target.value, priceEth: item.priceEth} : item))} placeholder="0x..." spellCheck={false}/>
                   </label>
                   <label className="block">Claim mint price ({settings.chainId === 137 ? "POL" : "ETH"}; 0 = free)
                     <input className={fieldClass} inputMode="decimal" value={source.priceEth} onChange={(e) => update("holderSources", settings.holderSources.map((item, i) => i === index ? { ...item, priceEth: e.target.value } : item))} placeholder="0" />
                   </label>
+                  {settings.tokenBoundClaimEnabled && (() => {
+                     const wallet = tbaDirectory.find(entry => entry.chainId === settings.chainId
+                       && entry.collection.toLowerCase() === source.contract.trim().toLowerCase());
+                     const isValidSource = ADDRESS_PATTERN.test(source.contract.trim());
+                     return <div className="space-y-2 border-t border-current pt-3">
+                       {!isValidSource ? <p className="text-sm opacity-70">Enter a valid ERC-721 collection address to check TBA support.</p>
+                         : wallet ? <div className="space-y-1">
+                             <p className="font-bold">✓ {wallet.walletName} — supported by Mintbay</p>
+                             <p className="text-sm opacity-70">ERC-6551 account configuration loads automatically and is included in the build for Bankr.</p>
+                           </div>
+                         : directoryNotice ? <p role="status" className="text-sm">{directoryNotice}</p>
+                         : <div className="space-y-2">
+                             <p className="text-sm opacity-75">This collection is not yet registered for ERC-6551 claims on Mintbay. Normal Holder Claim remains available.</p>
+                             <a className="inline-block underline font-bold text-sm" href="https://x.com/mintbay_fun" target="_blank" rel="noopener noreferrer">Request TBA integration on X ↗</a>
+                           </div>}
+                     </div>;
+                   })()}
+
                 </div>
               ))}
               {settings.holderSources.length < 5 && <button type="button" className={buttonClass} onClick={() => update("holderSources", [...settings.holderSources, { contract: "", priceEth: "0" }])}>+ Add NFT collection</button>}
@@ -570,7 +639,7 @@ export default function OnchainExportPanel({
         {step === 4 && <div className={`${panelClass} space-y-3`}>
           <h3 className="font-black uppercase">04 / Publish build & deploy with Bankr</h3>
           <p className="opacity-70">Publishes a hashed, immutable Studio build. Bankr generates and deploys the contract after you approve the transaction. Publishing itself does not spend ETH or POL.</p>
-          <p className="text-sm opacity-75">Publishing is currently invite-only while Mintbay is in testing. Need an access code? <a className="underline font-bold" href="https://x.com/mintbay_xyz" target="_blank" rel="noreferrer">Contact Mintbay ↗</a></p>
+          <p className="text-sm opacity-75">Publishing is currently invite-only while Mintbay is in testing. Need an access code? <a className="underline font-bold" href="https://x.com/mintbay_fun" target="_blank" rel="noreferrer">Contact Mintbay ↗</a></p>
           <label className="block">Publishing access code
             <input className={fieldClass} type="password" autoComplete="off" value={publishPassword} onChange={(event) => setPublishPassword(event.target.value)} placeholder="Enter access code" />
           </label>
