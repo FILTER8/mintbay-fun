@@ -12,6 +12,288 @@ const MAX_COMBINATION_COUNT = 100_001; // Exact until this cap, then show a lowe
 const RULE_ANALYSIS_BUDGET = 250_000;
 const LOSPEC_LIST = "https://lospec.com/palette-list";
 
+// 256 supplied 8x8 monochrome glyphs. Each hex byte is one row; high bit = left pixel.
+// Brushes are an editor-only convenience. Saved artwork remains normal colored pixels.
+const GLYPHS: readonly string[] = [
+  "0x0000000000000000",
+  "0x1824427E42424200",
+  "0x7C22223C22227C00",
+  "0x1C22404040221C00",
+  "0x7824222222247800",
+  "0x7E40407840407E00",
+  "0x7E40407840404000",
+  "0x1C22404E42221C00",
+  "0x4242427E42424200",
+  "0x1C08080808081C00",
+  "0x0E04040404443800",
+  "0x4244487048444200",
+  "0x4040404040407E00",
+  "0x42665A5A42424200",
+  "0x4262524A46424200",
+  "0x1824424242241800",
+  "0x7C42427C40404000",
+  "0x182442424A241A00",
+  "0x7C42427C48444200",
+  "0x3C42403C02423C00",
+  "0x3E08080808080800",
+  "0x4242424242423C00",
+  "0x4242422424181800",
+  "0x4242425A5A664200",
+  "0x4242241824424200",
+  "0x2222221C08080800",
+  "0x7E02041820407E00",
+  "0x0C12103810103E00",
+  "0x080808080F000000",
+  "0x08080808F8000000",
+  "0x080808080F080808",
+  "0x08080808FF000000",
+  "0x3C42465A62423C00",
+  "0x0818280808083E00",
+  "0x3C42020C30407E00",
+  "0x3C42023C02423C00",
+  "0x040C14247E040400",
+  "0x7E40780402443800",
+  "0x1C20407C42423C00",
+  "0x7E42040810101000",
+  "0x3C42423C42423C00",
+  "0x3C42423E02043800",
+  "0x0000007E00000000",
+  "0x00007E007E000000",
+  "0x0000080000080810",
+  "0x0002040810204000",
+  "0x0000000000181800",
+  "0x0000000000080810",
+  "0x00FF000000000000",
+  "0x4040404040404040",
+  "0x80808080808080FF",
+  "0x01010101010101FF",
+  "0x000000FF00000000",
+  "0x1010101010101010",
+  "0xFFFF000000000000",
+  "0xC0C0C0C0C0C0C0C0",
+  "0x0000000000FF0000",
+  "0x0404040404040404",
+  "0x00000000FFFFFFFF",
+  "0x0F0F0F0F0F0F0F0F",
+  "0x00000000000000FF",
+  "0x0101010101010101",
+  "0x000000000000FFFF",
+  "0x0303030303030303",
+  "0x1008080408081000",
+  "0x081C3E7F7F1C3E00",
+  "0xFF7F3F1F0F070301",
+  "0xFFFFFFFFFFFFFFFF",
+  "0x081C3E7F3E1C0800",
+  "0x000010207F201000",
+  "0x1C1C6B7F6B081C00",
+  "0x003C7E7E7E7E3C00",
+  "0x003C424242423C00",
+  "0x3C02020C10001000",
+  "0xFFC381818181C3FF",
+  "0x0000000003040808",
+  "0x00000000C0201010",
+  "0x80C0E0F0F8FCFEFF",
+  "0x0103070F1F3F7FFF",
+  "0x0000080000080000",
+  "0x00081C2A08080800",
+  "0x0E18306030180E00",
+  "0x3C20202020203C00",
+  "0x367F7F7F3E1C0800",
+  "0x3C04040404043C00",
+  "0x1C224A564C201E00",
+  "0xFFFEFCF8F0E0C080",
+  "0x70180C060C187000",
+  "0x000808082A1C0800",
+  "0x0040201008040200",
+  "0x000004027F020400",
+  "0xF0F0F0F00F0F0F0F",
+  "0x000000000F080808",
+  "0x00000000F0101010",
+  "0x08080808F8080808",
+  "0x00000000FF080808",
+  "0x0000013E54141400",
+  "0x0808080800000800",
+  "0x2424240000000000",
+  "0x24247E247E242400",
+  "0x081E281C0A1C0800",
+  "0x0062640810264600",
+  "0x304848304A443A00",
+  "0x0408100000000000",
+  "0x0408101010080400",
+  "0x2010080808102000",
+  "0x0008083E08080000",
+  "0x082A1C3E1C2A0800",
+  "0x0F0F0F0FF0F0F0F0",
+  "0x8142241818244281",
+  "0x101020C000000000",
+  "0x0808040300000000",
+  "0xFF00000000000000",
+  "0x8080808080808080",
+  "0xFF80808080808080",
+  "0xFF01010101010101",
+  "0x0000FF0000000000",
+  "0x2020202020202020",
+  "0x0102040810204080",
+  "0x8040201008040201",
+  "0x00000000FF000000",
+  "0x0808080808080808",
+  "0xFFFFFFFF00000000",
+  "0xF0F0F0F0F0F0F0F0",
+  "0x000000000000FF00",
+  "0x0202020202020202",
+  "0x0000000000FFFFFF",
+  "0x0707070707070707",
+  "0x1818181818181800",
+  "0x000038043C443A00",
+  "0x40405C6242625C00",
+  "0x00003C4240423C00",
+  "0x01011D2321231D00",
+  "0x00003C427E403C00",
+  "0x0C12107C10101000",
+  "0x00003A46463A023C",
+  "0x40405C6242424200",
+  "0x0800180808081C00",
+  "0x04000C0404044438",
+  "0x4040444850684400",
+  "0x1808080808081C00",
+  "0x0000764949494900",
+  "0x00005C6242424200",
+  "0x00003C4242423C00",
+  "0x00005C62625C4040",
+  "0x00003A46463A0202",
+  "0x00005C6240404000",
+  "0x00003E403C027C00",
+  "0x10107C1010120C00",
+  "0x0000424242463A00",
+  "0x0000424242241800",
+  "0x0000414949493600",
+  "0x0000442810284400",
+  "0x00004242463A023C",
+  "0x00007E0418207E00",
+  "0x240038043C443A00",
+  "0x0000000102040810",
+  "0x031C608000000000",
+  "0xC038060100000000",
+  "0x0000008040201008",
+  "0x00000000C0300C03",
+  "0x00FF000000FF0000",
+  "0x4444444444444444",
+  "0x44FF444444FF4444",
+  "0x2010080000000000",
+  "0x0000324C00000000",
+  "0xAA44AA11AA44AA11",
+  "0x00000000030C30C0",
+  "0x030C30C000000000",
+  "0xC0300C0300000000",
+  "0x3844444A42524C00",
+  "0x0022002222261A00",
+  "0x0022001C22221C00",
+  "0x4200424242423C00",
+  "0x421824427E424200",
+  "0x4218244242241800",
+  "0x1020204040408080",
+  "0x0106182020404080",
+  "0x8060180404020201",
+  "0x0804040202020101",
+  "0x8080404040202010",
+  "0x8040402020180601",
+  "0x0102020404186080",
+  "0x0101020202040408",
+  "0x1008040201000000",
+  "0x0000000080601C03",
+  "0x00000000010638C0",
+  "0x0810204080000000",
+  "0x0810102010100800",
+  "0x08080808FF080808",
+  "0x0814220000000000",
+  "0x0000000000007E00",
+  "0x1C1C3E1C08003E00",
+  "0xFFF7F7F7D5E3F7FF",
+  "0xFFF7E3D5F7F7F7FF",
+  "0xFFFFF7FB81FBF7FF",
+  "0xFFFFEFDF81DFEFFF",
+  "0xBDBDBD81BDBDBDFF",
+  "0xE3DDBFBFBFDDE3FF",
+  "0x18247EFF5A240000",
+  "0xE047427E4247E000",
+  "0x223E2A0808497F41",
+  "0x1C1C083E08081422",
+  "0x0011D2FCD2110000",
+  "0x00884B3F4B880000",
+  "0x221408083E081C1C",
+  "0x3C7EFFDBFFE77E3C",
+  "0x3C4281A58199423C",
+  "0xAA55AA55AA55AA55",
+  "0x0A050A050A050A05",
+  "0xA050A050A050A050",
+  "0xAA55AA5500000000",
+  "0x00000000AA55AA55",
+  "0xAA54A850A0408000",
+  "0xAA552A150A050201",
+  "0x8040A050A854AA55",
+  "0x000102050A152A55",
+  "0x8080404020201010",
+  "0x0808040402020101",
+  "0x3828380000000000",
+  "0x542A542A542A5400",
+  "0x0101020204040808",
+  "0x1010202040408080",
+  "0x00C0C85454552200",
+  "0x000000000002FF02",
+  "0x0202020202020702",
+  "0x020202020202FF02",
+  "0x0000205088050200",
+  "0x000E1122C4040201",
+  "0x1122448811224488",
+  "0x0070884423204080",
+  "0x00C4A4948F94A4C4",
+  "0x00232529F1292523",
+  "0x8890A0C0C0A898B8",
+  "0xA8B0B8C0C0A09088",
+  "0x804020101F204080",
+  "0x00002424E7242400",
+  "0x08083E00003E0808",
+  "0x0810201008040204",
+  "0x55AA55AA55AA55AA",
+  "0x56AAAB00EA35558A",
+  "0x0070707000000000",
+  "0x0007070700000000",
+  "0x0077777700000000",
+  "0x0000000000707070",
+  "0x0070707000707070",
+  "0x0007070700707070",
+  "0x0077777700707070",
+  "0x0000000000070707",
+  "0x0070707000070707",
+  "0x0007070700070707",
+  "0x0077777700070707",
+  "0x0000000000777777",
+  "0x0070707000777777",
+  "0x0007070700777777",
+  "0x0077777700777777"
+];
+const GLYPH_BITS = GLYPHS.map((hex) =>
+  Array.from({ length: 64 }, (_, i) => {
+    const row = Math.floor(i / 8);
+    const column = i % 8;
+    const rowByte = parseInt(hex.slice(2 + row * 2, 4 + row * 2), 16);
+    return ((rowByte >> (7 - column)) & 1) === 1;
+  }),
+);
+const GLYPH_PATHS = GLYPH_BITS.map((bits) => bits.flatMap((filled, i) =>
+  filled ? [`M${i % 8} ${Math.floor(i / 8)}h1v1h-1z`] : [],
+).join(""));
+
+function GlyphPreview({ id }: { id: number }) {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 8 8" className="h-full w-full"
+      shapeRendering="crispEdges" preserveAspectRatio="xMidYMid meet">
+      <path fill="currentColor" d={GLYPH_PATHS[id] ?? ""} />
+    </svg>
+  );
+}
+
+
 type Tab = "design" | "collection" | "share" | "onchain";
 type Tool = "paint" | "erase" | "bucket" | "move" | "select";
 type Theme = "light" | "dark";
@@ -707,6 +989,10 @@ export default function PixelEditorPage() {
   const [paletteStatus, setPaletteStatus] = useState("Paste hex colors or a Lospec palette URL.");
   const [paletteLoading, setPaletteLoading] = useState(false);
   const [tool, setTool] = useState<Tool>("paint");
+  const [brushGlyph, setBrushGlyph] = useState<number | null>(null); // null = single pixel
+  const [usedGlyphs, setUsedGlyphs] = useState<number[]>([]); // most recently stamped first
+  const [glyphHoverIndex, setGlyphHoverIndex] = useState<number | null>(null);
+
   const [showGrid, setShowGrid] = useState(true);
   const [activeLayerId, setActiveLayerId] = useState(project.layers[0].id);
   const [selection, setSelection] = useState<Selection | null>(null);
@@ -787,6 +1073,29 @@ export default function PixelEditorPage() {
 
     return Array.from(colors);
   }, [project.layers]);
+
+  // Ghost preview uses the exact same center and clipping as stampGlyph().
+  // It never touches project pixels, undo history, or exported artwork.
+  const glyphGhostCells = useMemo(() => {
+    const cells = new Set<number>();
+    if (tool !== "paint" || brushGlyph === null || glyphHoverIndex === null) return cells;
+    const bits = GLYPH_BITS[brushGlyph];
+    if (!bits) return cells;
+    const size = project.gridSize;
+    const anchorX = glyphHoverIndex % size;
+    const anchorY = Math.floor(glyphHoverIndex / size);
+    for (let y = 0; y < 8; y++) {
+      const targetY = anchorY + y - 4;
+      if (targetY < 0 || targetY >= size) continue;
+      for (let x = 0; x < 8; x++) {
+        const targetX = anchorX + x - 4;
+        if (bits[y * 8 + x] && targetX >= 0 && targetX < size) {
+          cells.add(targetY * size + targetX);
+        }
+      }
+    }
+    return cells;
+  }, [tool, brushGlyph, glyphHoverIndex, project.gridSize]);
 
   const previewPixels = useMemo(() => {
     const pixels = emptyPixels(project.gridSize);
@@ -981,6 +1290,38 @@ export default function PixelEditorPage() {
     setActivePixels(pixels);
   }
 
+  function stampGlyph(index: number, glyphId: number) {
+    const bits = GLYPH_BITS[glyphId];
+    if (!bits) return;
+    const size = project.gridSize;
+    const anchorX = index % size;
+    const anchorY = Math.floor(index / size);
+    const pixels = [...activeTrait.pixels];
+    let changed = false;
+    // The clicked cell is the center of the 8x8 brush (offset 4,4).
+    // Only filled pixels paint; transparent glyph pixels preserve existing artwork.
+    for (let y = 0; y < 8; y++) {
+      const targetY = anchorY + y - 4;
+      if (targetY < 0 || targetY >= size) continue;
+      for (let x = 0; x < 8; x++) {
+        if (!bits[y * 8 + x]) continue;
+        const targetX = anchorX + x - 4;
+        if (targetX < 0 || targetX >= size) continue;
+        const target = targetY * size + targetX;
+        if (pixels[target] !== color) { pixels[target] = color; changed = true; }
+      }
+    }
+    if (changed) setActivePixels(pixels); // one stamp = one Undo step
+    setUsedGlyphs(previous => [glyphId, ...previous.filter(id => id !== glyphId)]);
+  }
+
+  function chooseGlyph(id: number | null) {
+    setGlyphHoverIndex(null);
+    setBrushGlyph(id);
+    setTool("paint");
+    setStatus(id === null ? "Single-pixel brush selected" : `Glyph #${id} selected (8x8)`);
+  }
+
   function floodFill(startIndex: number) {
     const pixels = [...activeTrait.pixels];
     const targetColor = pixels[startIndex];
@@ -1004,7 +1345,10 @@ export default function PixelEditorPage() {
   }
 
   function applyTool(index: number) {
-    if (tool === "paint") setPixel(index, color);
+    if (tool === "paint") {
+      if (brushGlyph === null) setPixel(index, color);
+      else stampGlyph(index, brushGlyph);
+    }
     if (tool === "erase") setPixel(index, "transparent");
     if (tool === "bucket") floodFill(index);
   }
@@ -1025,6 +1369,7 @@ export default function PixelEditorPage() {
   }
 
   function handlePixelMouseEnter(index: number, buttons: number) {
+    setGlyphHoverIndex(index);
     if (tool === "select" && isSelecting) {
       setSelection((current) =>
         current ? { ...current, end: index } : { start: index, end: index },
@@ -1032,7 +1377,9 @@ export default function PixelEditorPage() {
       return;
     }
 
-    if (buttons === 1 && tool !== "bucket" && tool !== "move") applyTool(index);
+    // Glyphs stamp once on mouse down; dragging should not spray repeated 8x8 patterns.
+    if (buttons === 1 && tool !== "bucket" && tool !== "move" &&
+        !(tool === "paint" && brushGlyph !== null)) applyTool(index);
   }
 
   function handlePixelMouseUp(index: number) {
@@ -2318,7 +2665,7 @@ export default function PixelEditorPage() {
                 </p>
                 <p className="mt-1 opacity-70">
                   Shortcuts: P Paint · E Erase · B Bucket · M Move · S Select ·
-                  G Grid
+                  G Grid. Brush: {brushGlyph === null ? "1 pixel" : `glyph #${brushGlyph} (8x8)`}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -2348,7 +2695,7 @@ export default function PixelEditorPage() {
             <div className="flex justify-center overflow-auto">
               <div
                 className="grid touch-none"
-                onMouseLeave={() => setIsSelecting(false)}
+                onMouseLeave={() => { setIsSelecting(false); setGlyphHoverIndex(null); }}
                 style={{
                   gridTemplateColumns: `repeat(${project.gridSize}, ${canvasCellSize}px)`,
                   border: isDark ? "2px solid white" : "2px solid black",
@@ -2368,6 +2715,7 @@ export default function PixelEditorPage() {
                     onMouseEnter={(event) =>
                       handlePixelMouseEnter(index, event.buttons)
                     }
+                    className="relative p-0"
                     style={{
                       width: canvasCellSize,
                       height: canvasCellSize,
@@ -2389,7 +2737,15 @@ export default function PixelEditorPage() {
                             : "1px solid #bbb"
                           : "0",
                     }}
-                  />
+                  >
+                    {glyphGhostCells.has(index) && (
+                      <span
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 opacity-50"
+                        style={{ backgroundColor: color }}
+                      />
+                    )}
+                  </button>
                 ))}
               </div>
             </div>
@@ -2506,6 +2862,48 @@ export default function PixelEditorPage() {
                 Right
               </button>
             </div>
+
+            <div className={`mt-4 border-t-2 pt-3 ${ui.border}`}>
+              <h3 className="mb-2 font-bold uppercase">Paint brush</h3>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" title="Single-pixel brush" aria-label="Single-pixel brush"
+                  onClick={() => chooseGlyph(null)}
+                  className={`h-7 w-7 border-2 p-1 ${brushGlyph === null && tool === "paint" ? ui.active : ui.inactive}`}>
+                  <span className="block h-full w-full" style={{ background: color }} />
+                </button>
+                <span className="text-xs opacity-70">{brushGlyph === null ? "1 pixel" : `8x8 glyph #${brushGlyph}`} · current color</span>
+              </div>
+            </div>
+
+            <details className={`mt-3 border-t-2 pt-3 ${ui.border}`}>
+              <summary className="cursor-pointer font-bold uppercase">Glyph library ({GLYPHS.length})</summary>
+              <p className="my-2 text-xs opacity-70">Select an 8x8 glyph and hover over the canvas to preview its placement. Click to stamp; the ghost preview does not modify artwork.</p>
+              <div className="mt-2 flex max-h-52 flex-wrap content-start gap-2 overflow-y-auto pb-2">
+                {GLYPHS.map((_, id) => (
+                  <button key={id} type="button" title={`Glyph #${id}`}
+                    aria-label={`Select glyph ${id}`} onClick={() => chooseGlyph(id)}
+                    aria-pressed={brushGlyph === id && tool === "paint"}
+                    className={`h-7 w-7 shrink-0 border-2 p-0.5 ${brushGlyph === id && tool === "paint" ? ui.active : ui.inactive}`}>
+                    <GlyphPreview id={id}/>
+                  </button>
+                ))}
+              </div>
+            </details>
+
+            <details open className={`mt-3 border-t-2 pt-3 ${ui.border}`}>
+              <summary className="cursor-pointer font-bold uppercase">Used Glyphs ({usedGlyphs.length})</summary>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {usedGlyphs.length === 0 && <span className="text-xs opacity-70">Stamp a glyph to add it here.</span>}
+                {usedGlyphs.map(id => (
+                  <button key={id} type="button" title={`Reuse glyph #${id}`}
+                    aria-label={`Reuse glyph ${id}`} onClick={() => chooseGlyph(id)}
+                    aria-pressed={brushGlyph === id && tool === "paint"}
+                    className={`h-7 w-7 border-2 p-0.5 ${brushGlyph === id && tool === "paint" ? ui.active : ui.inactive}`}>
+                    <GlyphPreview id={id}/>
+                  </button>
+                ))}
+              </div>
+            </details>
 
             <div className={`mt-4 border-t-2 pt-3 ${ui.border}`}>
               <h3 className="mb-2 font-bold uppercase">Used Colors</h3>
