@@ -1332,6 +1332,15 @@ export default function PixelEditorPage() {
     setBackgroundColor(next);
   }
 
+  function swapGlyphColors() {
+    const previousForeground = color;
+    const previousBackground = backgroundColor;
+    // Swap actual values, including transparency, without losing the last opaque choices.
+    chooseForeground(previousBackground);
+    chooseBackground(previousForeground);
+    setStatus("Glyph colors swapped");
+  }
+
   function chooseGlyph(id: number | null) {
     setGlyphHoverIndex(null);
     setBrushGlyph(id);
@@ -2883,47 +2892,49 @@ export default function PixelEditorPage() {
             </div>
 
             <div className={`mt-4 border-t-2 pt-3 ${ui.border}`}>
-              <h3 className="mb-2 font-bold uppercase">Paint brush</h3>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-3 overflow-x-auto pb-1">
+                <h3 className="font-bold uppercase">Paint brush</h3>
                 <button type="button" title="Single-pixel brush" aria-label="Single-pixel brush"
                   onClick={() => chooseGlyph(null)}
-                  className={`h-7 w-7 border-2 p-1 ${brushGlyph === null && tool === "paint" ? ui.active : ui.inactive}`}>
+                  className={`h-7 w-7 shrink-0 border-2 p-1 ${brushGlyph === null && tool === "paint" ? ui.active : ui.inactive}`}>
                   <span className="block h-full w-full" style={{ background: color === "transparent" ? "repeating-conic-gradient(#aaa 0% 25%, #fff 0% 50%) 50% / 6px 6px" : color }} />
                 </button>
-                <span className="text-xs opacity-70">{brushGlyph === null ? "1 pixel" : `8x8 glyph #${brushGlyph}`}</span>
-                {brushGlyph !== null && <div className={`h-10 w-10 border-2 p-0.5 ${ui.border}`}
-                  style={{ background: "repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 8px 8px" }}>
-                  <GlyphPreview id={brushGlyph} foreground={color} background={backgroundColor}/>
-                </div>}
-              </div>
-              {brushGlyph !== null && <div className="mt-3 flex flex-wrap items-end gap-3">
-                <div className="min-w-0 space-y-1">
-                  <label htmlFor="mintbay-glyph-fg" className="block text-xs font-bold uppercase">Foreground</label>
-                  <div className="flex items-center gap-1">
-                    <input id="mintbay-glyph-fg" type="color" value={color === "transparent" ? lastForegroundColor : color}
+                <span className="whitespace-nowrap text-xs opacity-70">{brushGlyph === null ? "1 pixel" : `8x8 glyph #${brushGlyph}`}</span>
+                {brushGlyph !== null && <>
+                  <div className={`h-9 w-9 shrink-0 border-2 p-0.5 ${ui.border}`}
+                    style={{ background: "repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 8px 8px" }}>
+                    <GlyphPreview id={brushGlyph} foreground={color} background={backgroundColor}/>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <label htmlFor="mintbay-glyph-fg" className="text-xs font-bold uppercase">FG</label>
+                    <input id="mintbay-glyph-fg" type="color" title="Foreground color"
+                      value={color === "transparent" ? lastForegroundColor : color}
                       onChange={event => chooseForeground(event.target.value)}
-                      className={`h-9 w-10 cursor-pointer border-2 ${ui.input}`} />
-                    <button type="button" onClick={() => chooseForeground(color === "transparent" ? lastForegroundColor : "transparent")}
+                      className={`h-9 w-9 cursor-pointer border-2 ${ui.input}`} />
+                    <button type="button" title="Toggle transparent foreground"
+                      onClick={() => chooseForeground(color === "transparent" ? lastForegroundColor : "transparent")}
                       aria-pressed={color === "transparent"}
                       className={`border-2 px-2 py-2 text-xs ${color === "transparent" ? ui.active : ui.inactive}`}>
                       {color === "transparent" ? "Restore" : "Transparent"}
                     </button>
                   </div>
-                </div>
-                <div className="min-w-0 space-y-1">
-                  <label htmlFor="mintbay-glyph-bg" className="block text-xs font-bold uppercase">Background</label>
-                  <div className="flex items-center gap-1">
-                    <input id="mintbay-glyph-bg" type="color" value={backgroundColor === "transparent" ? lastBackgroundColor : backgroundColor}
+                  <button type="button" title="Swap foreground and background" aria-label="Swap foreground and background colors"
+                    onClick={swapGlyphColors} className={`h-9 border-2 px-2 font-bold ${ui.inactive}`}>⇄</button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <label htmlFor="mintbay-glyph-bg" className="text-xs font-bold uppercase">BG</label>
+                    <input id="mintbay-glyph-bg" type="color" title="Background color"
+                      value={backgroundColor === "transparent" ? lastBackgroundColor : backgroundColor}
                       onChange={event => chooseBackground(event.target.value)}
-                      className={`h-9 w-10 cursor-pointer border-2 ${ui.input}`} />
-                    <button type="button" onClick={() => chooseBackground(backgroundColor === "transparent" ? lastBackgroundColor : "transparent")}
+                      className={`h-9 w-9 cursor-pointer border-2 ${ui.input}`} />
+                    <button type="button" title="Toggle transparent background"
+                      onClick={() => chooseBackground(backgroundColor === "transparent" ? lastBackgroundColor : "transparent")}
                       aria-pressed={backgroundColor === "transparent"}
                       className={`border-2 px-2 py-2 text-xs ${backgroundColor === "transparent" ? ui.active : ui.inactive}`}>
                       {backgroundColor === "transparent" ? "Restore" : "Transparent"}
                     </button>
                   </div>
-                </div>
-              </div>}
+                </>}
+              </div>
             </div>
 
             <details className={`mt-3 border-t-2 pt-3 ${ui.border}`}>
