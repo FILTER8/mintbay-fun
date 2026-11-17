@@ -2896,10 +2896,10 @@ export default function PixelEditorPage() {
                   <GlyphPreview id={brushGlyph} foreground={color} background={backgroundColor}/>
                 </div>}
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-3">
-                <div className="space-y-2">
+              {brushGlyph !== null && <div className="mt-3 flex flex-wrap items-end gap-3">
+                <div className="min-w-0 space-y-1">
                   <label htmlFor="mintbay-glyph-fg" className="block text-xs font-bold uppercase">Foreground</label>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
                     <input id="mintbay-glyph-fg" type="color" value={color === "transparent" ? lastForegroundColor : color}
                       onChange={event => chooseForeground(event.target.value)}
                       className={`h-9 w-10 cursor-pointer border-2 ${ui.input}`} />
@@ -2910,9 +2910,9 @@ export default function PixelEditorPage() {
                     </button>
                   </div>
                 </div>
-                <div className="space-y-2">
+                <div className="min-w-0 space-y-1">
                   <label htmlFor="mintbay-glyph-bg" className="block text-xs font-bold uppercase">Background</label>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
                     <input id="mintbay-glyph-bg" type="color" value={backgroundColor === "transparent" ? lastBackgroundColor : backgroundColor}
                       onChange={event => chooseBackground(event.target.value)}
                       className={`h-9 w-10 cursor-pointer border-2 ${ui.input}`} />
@@ -2923,13 +2923,11 @@ export default function PixelEditorPage() {
                     </button>
                   </div>
                 </div>
-              </div>
-              <p className="mt-2 text-xs opacity-70">Foreground paints glyph pixels; background paints empty cells. Transparent background preserves existing artwork; transparent foreground erases glyph pixels.</p>
+              </div>}
             </div>
 
             <details className={`mt-3 border-t-2 pt-3 ${ui.border}`}>
               <summary className="cursor-pointer font-bold uppercase">Glyph library ({GLYPHS.length})</summary>
-              <p className="my-2 text-xs opacity-70">Select an 8x8 glyph and hover over the canvas to preview its placement. Click to stamp; the ghost preview does not modify artwork.</p>
               <div className="mt-2 flex max-h-52 flex-wrap content-start gap-2 overflow-y-auto pb-2">
                 {GLYPHS.map((_, id) => (
                   <button key={id} type="button" title={`Glyph #${id}`}
