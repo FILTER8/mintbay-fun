@@ -284,11 +284,12 @@ const GLYPH_PATHS = GLYPH_BITS.map((bits) => bits.flatMap((filled, i) =>
   filled ? [`M${i % 8} ${Math.floor(i / 8)}h1v1h-1z`] : [],
 ).join(""));
 
-function GlyphPreview({ id }: { id: number }) {
+function GlyphPreview({ id, foreground = "currentColor", background = "transparent" }: { id: number; foreground?: string; background?: string }) {
   return (
     <svg aria-hidden="true" viewBox="0 0 8 8" className="h-full w-full"
       shapeRendering="crispEdges" preserveAspectRatio="xMidYMid meet">
-      <path fill="currentColor" d={GLYPH_PATHS[id] ?? ""} />
+      {background !== "transparent" && <rect width="8" height="8" fill={background} />}
+      {foreground !== "transparent" && <path fill={foreground} d={GLYPH_PATHS[id] ?? ""} />}
     </svg>
   );
 }
@@ -983,7 +984,10 @@ export default function PixelEditorPage() {
   const [theme, setTheme] = useState<Theme>("light");
   const [tab, setTab] = useState<Tab>("design");
   const [project, setProject] = useState<Project>(() => makeInitialProject());
-  const [color, setColor] = useState("#000000");
+  const [color, setColor] = useState("#000000"); // foreground; may be transparent
+  const [backgroundColor, setBackgroundColor] = useState("transparent"); // glyph background only
+  const [lastForegroundColor, setLastForegroundColor] = useState("#000000");
+  const [lastBackgroundColor, setLastBackgroundColor] = useState("#ffffff");
   const [paletteInput, setPaletteInput] = useState("");
   const [paletteColors, setPaletteColors] = useState<string[]>([]);
   const [paletteStatus, setPaletteStatus] = useState("Paste hex colors or a Lospec palette URL.");
@@ -1074,10 +1078,10 @@ export default function PixelEditorPage() {
     return Array.from(colors);
   }, [project.layers]);
 
-  // Ghost preview uses the exact same center and clipping as stampGlyph().
-  // It never touches project pixels, undo history, or exported artwork.
+  // Same 8x8 placement and clipping as stampGlyph; null means no paint action.
+  // Transparency is an intentional "erase" only when explicitly selected for a color.
   const glyphGhostCells = useMemo(() => {
-    const cells = new Set<number>();
+    const cells = new Map<number, string>();
     if (tool !== "paint" || brushGlyph === null || glyphHoverIndex === null) return cells;
     const bits = GLYPH_BITS[brushGlyph];
     if (!bits) return cells;
@@ -1089,13 +1093,15 @@ export default function PixelEditorPage() {
       if (targetY < 0 || targetY >= size) continue;
       for (let x = 0; x < 8; x++) {
         const targetX = anchorX + x - 4;
-        if (bits[y * 8 + x] && targetX >= 0 && targetX < size) {
-          cells.add(targetY * size + targetX);
-        }
+        if (targetX < 0 || targetX >= size) continue;
+        const targetColor = bits[y * 8 + x] ? color : backgroundColor;
+        // Empty/transparent background is a mask and preserves the underlying art.
+        if (targetColor === "transparent" && !bits[y * 8 + x]) continue;
+        cells.set(targetY * size + targetX, targetColor);
       }
     }
     return cells;
-  }, [tool, brushGlyph, glyphHoverIndex, project.gridSize]);
+  }, [tool, brushGlyph, glyphHoverIndex, project.gridSize, color, backgroundColor]);
 
   const previewPixels = useMemo(() => {
     const pixels = emptyPixels(project.gridSize);
@@ -1298,21 +1304,32 @@ export default function PixelEditorPage() {
     const anchorY = Math.floor(index / size);
     const pixels = [...activeTrait.pixels];
     let changed = false;
-    // The clicked cell is the center of the 8x8 brush (offset 4,4).
-    // Only filled pixels paint; transparent glyph pixels preserve existing artwork.
+    // One stamp, one undo step. A transparent background leaves original art intact.
     for (let y = 0; y < 8; y++) {
       const targetY = anchorY + y - 4;
       if (targetY < 0 || targetY >= size) continue;
       for (let x = 0; x < 8; x++) {
-        if (!bits[y * 8 + x]) continue;
         const targetX = anchorX + x - 4;
         if (targetX < 0 || targetX >= size) continue;
+        const filled = bits[y * 8 + x];
+        const stampColor = filled ? color : backgroundColor;
+        if (!filled && stampColor === "transparent") continue;
         const target = targetY * size + targetX;
-        if (pixels[target] !== color) { pixels[target] = color; changed = true; }
+        if (pixels[target] !== stampColor) { pixels[target] = stampColor; changed = true; }
       }
     }
-    if (changed) setActivePixels(pixels); // one stamp = one Undo step
+    if (changed) setActivePixels(pixels);
     setUsedGlyphs(previous => [glyphId, ...previous.filter(id => id !== glyphId)]);
+  }
+
+  function chooseForeground(next: string) {
+    if (next !== "transparent") setLastForegroundColor(next);
+    setColor(next);
+  }
+
+  function chooseBackground(next: string) {
+    if (next !== "transparent") setLastBackgroundColor(next);
+    setBackgroundColor(next);
   }
 
   function chooseGlyph(id: number | null) {
@@ -2447,7 +2464,7 @@ export default function PixelEditorPage() {
                         key={swatch}
                         title={`Select ${swatch}`}
                         aria-label={`Select paint color ${swatch}`}
-                        onClick={() => { setColor(swatch); setStatus(`Selected palette color ${swatch}`); }}
+                        onClick={() => { chooseForeground(swatch); setStatus(`Selected palette color ${swatch}`); }}
                         className={`aspect-square border-2 ${color.toLowerCase() === swatch ? "ring-2 ring-offset-2 ring-current" : ""} ${ui.border}`}
                         style={{ backgroundColor: swatch }}
                       />
@@ -2741,8 +2758,10 @@ export default function PixelEditorPage() {
                     {glyphGhostCells.has(index) && (
                       <span
                         aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 opacity-50"
-                        style={{ backgroundColor: color }}
+                        className="pointer-events-none absolute inset-0"
+                        style={glyphGhostCells.get(index) === "transparent"
+                          ? { background: "repeating-linear-gradient(135deg, transparent 0px, transparent 3px, #ff4365 3px, #ff4365 5px)", opacity: 0.6, outline: "1px dashed #ff4365", outlineOffset: "-1px" }
+                          : { backgroundColor: glyphGhostCells.get(index), opacity: 0.6 }}
                       />
                     )}
                   </button>
@@ -2753,8 +2772,8 @@ export default function PixelEditorPage() {
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               <input
                 type="color"
-                value={color}
-                onChange={(event) => setColor(event.target.value)}
+                value={color === "transparent" ? lastForegroundColor : color}
+                onChange={(event) => chooseForeground(event.target.value)}
                 className={`h-10 w-12 border-2 ${ui.input}`}
               />
               {toolButtons.map((item) => (
@@ -2869,10 +2888,43 @@ export default function PixelEditorPage() {
                 <button type="button" title="Single-pixel brush" aria-label="Single-pixel brush"
                   onClick={() => chooseGlyph(null)}
                   className={`h-7 w-7 border-2 p-1 ${brushGlyph === null && tool === "paint" ? ui.active : ui.inactive}`}>
-                  <span className="block h-full w-full" style={{ background: color }} />
+                  <span className="block h-full w-full" style={{ background: color === "transparent" ? "repeating-conic-gradient(#aaa 0% 25%, #fff 0% 50%) 50% / 6px 6px" : color }} />
                 </button>
-                <span className="text-xs opacity-70">{brushGlyph === null ? "1 pixel" : `8x8 glyph #${brushGlyph}`} · current color</span>
+                <span className="text-xs opacity-70">{brushGlyph === null ? "1 pixel" : `8x8 glyph #${brushGlyph}`}</span>
+                {brushGlyph !== null && <div className={`h-10 w-10 border-2 p-0.5 ${ui.border}`}
+                  style={{ background: "repeating-conic-gradient(#ccc 0% 25%, #fff 0% 50%) 50% / 8px 8px" }}>
+                  <GlyphPreview id={brushGlyph} foreground={color} background={backgroundColor}/>
+                </div>}
               </div>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label htmlFor="mintbay-glyph-fg" className="block text-xs font-bold uppercase">Foreground</label>
+                  <div className="flex items-center gap-2">
+                    <input id="mintbay-glyph-fg" type="color" value={color === "transparent" ? lastForegroundColor : color}
+                      onChange={event => chooseForeground(event.target.value)}
+                      className={`h-9 w-10 cursor-pointer border-2 ${ui.input}`} />
+                    <button type="button" onClick={() => chooseForeground(color === "transparent" ? lastForegroundColor : "transparent")}
+                      aria-pressed={color === "transparent"}
+                      className={`border-2 px-2 py-2 text-xs ${color === "transparent" ? ui.active : ui.inactive}`}>
+                      {color === "transparent" ? "Restore" : "Transparent"}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="mintbay-glyph-bg" className="block text-xs font-bold uppercase">Background</label>
+                  <div className="flex items-center gap-2">
+                    <input id="mintbay-glyph-bg" type="color" value={backgroundColor === "transparent" ? lastBackgroundColor : backgroundColor}
+                      onChange={event => chooseBackground(event.target.value)}
+                      className={`h-9 w-10 cursor-pointer border-2 ${ui.input}`} />
+                    <button type="button" onClick={() => chooseBackground(backgroundColor === "transparent" ? lastBackgroundColor : "transparent")}
+                      aria-pressed={backgroundColor === "transparent"}
+                      className={`border-2 px-2 py-2 text-xs ${backgroundColor === "transparent" ? ui.active : ui.inactive}`}>
+                      {backgroundColor === "transparent" ? "Restore" : "Transparent"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <p className="mt-2 text-xs opacity-70">Foreground paints glyph pixels; background paints empty cells. Transparent background preserves existing artwork; transparent foreground erases glyph pixels.</p>
             </div>
 
             <details className={`mt-3 border-t-2 pt-3 ${ui.border}`}>
@@ -2884,7 +2936,7 @@ export default function PixelEditorPage() {
                     aria-label={`Select glyph ${id}`} onClick={() => chooseGlyph(id)}
                     aria-pressed={brushGlyph === id && tool === "paint"}
                     className={`h-7 w-7 shrink-0 border-2 p-0.5 ${brushGlyph === id && tool === "paint" ? ui.active : ui.inactive}`}>
-                    <GlyphPreview id={id}/>
+                    <GlyphPreview id={id} foreground={color} background={backgroundColor}/>
                   </button>
                 ))}
               </div>
@@ -2899,7 +2951,7 @@ export default function PixelEditorPage() {
                     aria-label={`Reuse glyph ${id}`} onClick={() => chooseGlyph(id)}
                     aria-pressed={brushGlyph === id && tool === "paint"}
                     className={`h-7 w-7 border-2 p-0.5 ${brushGlyph === id && tool === "paint" ? ui.active : ui.inactive}`}>
-                    <GlyphPreview id={id}/>
+                    <GlyphPreview id={id} foreground={color} background={backgroundColor}/>
                   </button>
                 ))}
               </div>
@@ -2913,7 +2965,7 @@ export default function PixelEditorPage() {
                   <button
                     key={usedColor}
                     title={usedColor}
-                    onClick={() => setColor(usedColor)}
+                    onClick={() => chooseForeground(usedColor)}
                     className={`h-7 w-7 border-2 ${ui.border}`}
                     style={{ background: usedColor }}
                   />
